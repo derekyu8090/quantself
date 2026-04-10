@@ -6,6 +6,7 @@ const translations = {
       loading: 'Loading health data',
       loadingSub: 'Fetching cardiovascular, sleep, activity and overview records...',
       errorTitle: 'Failed to load data',
+      export: 'Export PDF',
     },
     tabs: {
       cardiovascular: 'Cardiovascular',
@@ -13,7 +14,13 @@ const translations = {
       activity: 'Activity',
       risk: 'Risk & Goals',
       compare: 'Compare',
+      ecg: 'ECG',
       glossary: 'Glossary',
+    },
+    ecg: {
+      noData: 'No ECG recordings available',
+      waveform: 'ECG Waveform',
+      recording: 'Recording',
     },
     compare: {
       title: 'Period Comparison',
@@ -92,6 +99,7 @@ const translations = {
       wristTemp: 'Wrist Temperature',
       wristTempSub: 'Monthly Average',
       clinicalThreshold: 'Clinical Threshold',
+      calendarHeatmap: 'Sleep Duration Calendar',
     },
     activity: {
       dailySteps: 'Daily Steps',
@@ -124,11 +132,24 @@ const translations = {
       swimDuration: 'Session Duration Trend',
       swimHRZone: 'Heart Rate Zone Distribution',
       swimHRZones: 'Heart Rate Zone Distribution',
+      stepsCalendar: 'Steps Calendar',
       workoutTypes: {
         Swimming: 'Swimming', Walking: 'Walking', Cycling: 'Cycling',
         TraditionalStrengthTraining: 'Strength', Running: 'Running',
         Rowing: 'Rowing', CrossTraining: 'Cross Training', Elliptical: 'Elliptical',
       },
+    },
+    achievements: {
+      title: 'Achievements & Records',
+      exerciseStreak: 'Exercise Streak',
+      sleepStreak: 'Sleep ≥7h Streak',
+      stepsStreak: 'Steps ≥8K Streak',
+      longestSwim: 'Longest Swim',
+      longestWorkout: 'Longest Workout',
+      maxSteps: 'Most Steps (1 Day)',
+      nights: 'nights',
+      days: 'days',
+      weeks: 'weeks',
     },
     recovery: {
       title: 'Exercise-Recovery Analysis',
@@ -149,6 +170,12 @@ const translations = {
       trend: { improving: 'Improving', declining: 'Declining', stable: 'Stable' },
       components: { rhr: 'Heart Rate', hrv: 'HRV', sleep: 'Sleep', activity: 'Activity', recovery: 'Recovery', body: 'Body' },
       last30: 'Last 30 days',
+    },
+    longevity: {
+      title: 'Longevity Score',
+      subtitle: 'Evidence-based long-term health assessment',
+      priority: '← Priority',
+      sources: 'Sources',
     },
     baselines: {
       title: 'Baseline Status',
@@ -245,6 +272,7 @@ const translations = {
       loading: '加载健康数据',
       loadingSub: '正在获取心血管、睡眠、活动及概览数据...',
       errorTitle: '数据加载失败',
+      export: '导出PDF',
     },
     tabs: {
       cardiovascular: '心血管',
@@ -252,7 +280,13 @@ const translations = {
       activity: '活动',
       risk: '风险与目标',
       compare: '对比',
+      ecg: '心电图',
       glossary: '指标说明',
+    },
+    ecg: {
+      noData: '暂无心电图记录',
+      waveform: '心电图波形',
+      recording: '记录',
     },
     compare: {
       title: '时间段对比',
@@ -331,6 +365,7 @@ const translations = {
       wristTemp: '手腕温度',
       wristTempSub: '月均值',
       clinicalThreshold: '临床阈值',
+      calendarHeatmap: '睡眠时长日历',
     },
     activity: {
       dailySteps: '日均步数',
@@ -363,11 +398,24 @@ const translations = {
       swimDuration: '训练时长趋势',
       swimHRZone: '心率区间分布',
       swimHRZones: '心率区间分布',
+      stepsCalendar: '步数日历',
       workoutTypes: {
         Swimming: '游泳', Walking: '步行', Cycling: '骑行',
         TraditionalStrengthTraining: '力量训练', Running: '跑步',
         Rowing: '划船', CrossTraining: '交叉训练', Elliptical: '椭圆机',
       },
+    },
+    achievements: {
+      title: '成就与记录',
+      exerciseStreak: '运动连续周数',
+      sleepStreak: '睡眠≥7h连续天数',
+      stepsStreak: '步数≥8K连续天数',
+      longestSwim: '最长游泳距离',
+      longestWorkout: '最长运动时间',
+      maxSteps: '单日最多步数',
+      nights: '晚',
+      days: '天',
+      weeks: '周',
     },
     recovery: {
       title: '运动-恢复关联分析',
@@ -388,6 +436,12 @@ const translations = {
       trend: { improving: '上升中', declining: '下降中', stable: '稳定' },
       components: { rhr: '心率', hrv: 'HRV', sleep: '睡眠', activity: '活动', recovery: '恢复', body: '体征' },
       last30: '近30天',
+    },
+    longevity: {
+      title: '长期健康评分',
+      subtitle: '基于循证医学的长期健康评估',
+      priority: '← 优先改善',
+      sources: '参考文献',
     },
     baselines: {
       title: '基线状态',

@@ -34,6 +34,7 @@ import {
   ResponsiveContainer,
 } from 'recharts';
 import StatCard from './StatCard';
+import CalendarHeatmap from './CalendarHeatmap';
 import { getChartTheme } from '../chartTheme';
 import { fmtMonth, formatBedtime, filterByDateRange } from '../utils/dataUtils';
 import { useDateRange } from '../contexts/DateRangeContext';
@@ -514,7 +515,18 @@ export default function SleepPanel({ data, t }) {
       </div>
 
       {/* ------------------------------------------------------------------ */}
-      {/* Row 5 — Breathing Disturbances + Wrist Temperature side by side     */}
+      {/* Row 5 — Sleep Duration Calendar Heatmap (full width)               */}
+      {/* ------------------------------------------------------------------ */}
+      <CalendarHeatmap
+        data={data.nightly?.map((n) => ({ date: n.date, value: Math.round(n.total * 10) / 10 }))}
+        colorVar="var(--color-sleep)"
+        label={t?.('sleep.calendarHeatmap') ?? 'Sleep Duration Calendar'}
+        unit="h"
+        targetRange={[7, 9]}
+      />
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Row 6 — Breathing Disturbances + Wrist Temperature side by side     */}
       {/* ------------------------------------------------------------------ */}
       {(bdMonthlyFiltered.length > 0 || tempMonthlyFiltered.length > 0) && (
         <div className="two-col">

@@ -7,6 +7,8 @@
  */
 
 import StatCard from './StatCard';
+import CalendarHeatmap from './CalendarHeatmap';
+import AchievementBadges from './AchievementBadges';
 import { getChartTheme } from '../chartTheme';
 import { fmtDateShortZh as formatDate, fmtMonthShortZh as formatMonth, filterByDateRange } from '../utils/dataUtils';
 import { useDateRange } from '../contexts/DateRangeContext';
@@ -484,7 +486,24 @@ function ActivityPanel({ data, t }) {
         <RecentWorkoutsTable workouts={workoutsFiltered} t={t} />
       </div>
 
-      {/* ── Row 6: swimming analysis ── */}
+      {/* ── Row 6: steps calendar heatmap ── */}
+      <CalendarHeatmap
+        data={data?.steps?.daily}
+        colorVar="var(--color-activity)"
+        label={t?.('activity.stepsCalendar') ?? 'Steps Calendar'}
+        unit=" steps"
+        targetRange={[8000, 15000]}
+      />
+
+      {/* ── Row 7: achievements & records ── */}
+      <AchievementBadges
+        steps={data?.steps}
+        workouts={data?.workouts}
+        sleepNightly={null}
+        t={t}
+      />
+
+      {/* ── Row 8: swimming analysis ── */}
       <div className="card">
         <p className="section-title" style={{ marginBottom: '16px' }}>{t?.('activity.swimAnalysis') ?? '游泳分析'}</p>
         <div className="two-col">

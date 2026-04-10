@@ -7,24 +7,28 @@ import GlossaryPanel from './components/GlossaryPanel'
 import ComparisonView from './components/ComparisonView'
 import DateRangePicker from './components/DateRangePicker'
 import HealthScoreCard from './components/HealthScoreCard'
+import LongevityScoreCard from './components/LongevityScoreCard'
 import BaselineAlerts from './components/BaselineAlerts'
+import ECGPanel from './components/ECGPanel'
 import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
+import './print.css'
 
-const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'compare', 'glossary']
-const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', compare: '⇔', glossary: '?' }
+const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'compare', 'ecg', 'glossary']
+const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', compare: '⇔', ecg: '♡', glossary: '?' }
 
 const DATA_URLS = {
   cardiovascular: '/data/cardiovascular.json',
   sleep:          '/data/sleep.json',
   activity:       '/data/activity.json',
   overview:       '/data/overview.json',
+  ecg:            '/data/ecg.json',
 }
 
 function App() {
   const [activeTab, setActiveTab] = useState('cardiovascular')
-  const [data, setData] = useState({ cardiovascular: null, sleep: null, activity: null, overview: null })
+  const [data, setData] = useState({ cardiovascular: null, sleep: null, activity: null, overview: null, ecg: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
 
@@ -59,8 +63,8 @@ function App() {
       try {
         const responses = await Promise.all(Object.values(DATA_URLS).map(u => fetch(u)))
         for (const r of responses) { if (!r.ok) throw new Error(`Failed (${r.status})`) }
-        const [cardiovascular, sleep, activity, overview] = await Promise.all(responses.map(r => r.json()))
-        if (!cancelled) { setData({ cardiovascular, sleep, activity, overview }); setLoading(false) }
+        const [cardiovascular, sleep, activity, overview, ecg] = await Promise.all(responses.map(r => r.json()))
+        if (!cancelled) { setData({ cardiovascular, sleep, activity, overview, ecg }); setLoading(false) }
       } catch (err) {
         if (!cancelled) { setError(err.message ?? 'Unknown error'); setLoading(false) }
       }
@@ -107,6 +111,11 @@ function App() {
           <DateRangePicker lang={lang} />
 
           <div className="header-meta">
+            {/* Export PDF */}
+            <button className="export-btn print-hide" onClick={() => window.print()}>
+              {t?.('app.export') ?? 'Export PDF'}
+            </button>
+
             {/* Language toggle */}
             <button className="lang-toggle" onClick={toggleLang} aria-label="Switch language">
               <span className={`lang-opt${lang === 'en' ? ' active' : ''}`}>EN</span>
@@ -151,10 +160,13 @@ function App() {
 
         {!loading && !error && data.overview && (
           <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
-            <div style={{ flex: '1 1 340px' }}>
+            <div style={{ flex: '1 1 280px' }}>
               <HealthScoreCard data={data.overview.healthScore} t={t} />
             </div>
-            <div style={{ flex: '1 1 340px' }}>
+            <div style={{ flex: '1 1 280px' }}>
+              <LongevityScoreCard data={data.overview?.longevityScore} t={t} />
+            </div>
+            <div style={{ flex: '1 1 280px' }}>
               <BaselineAlerts baselines={data.overview.baselines} t={t} />
             </div>
           </div>
@@ -208,6 +220,11 @@ function App() {
                   t={t}
                 />
               )}
+            </div>
+
+            <div id="panel-ecg" role="tabpanel" aria-labelledby="tab-ecg"
+                 hidden={activeTab !== 'ecg'}>
+              {activeTab === 'ecg' && <ECGPanel data={data.ecg} t={t} />}
             </div>
 
             <div id="panel-glossary" role="tabpanel" aria-labelledby="tab-glossary"

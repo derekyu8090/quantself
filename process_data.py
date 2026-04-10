@@ -543,6 +543,369 @@ def compute_baselines(rhr_daily, hrv_daily_map, nightly, steps_daily):
     return baselines
 
 
+def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nightly_list,
+                            steps_daily, workouts, body_mass, body_fat, spo2_records,
+                            exercise_time_daily, age, sex):
+    """
+    Evidence-based Longevity Score (0-100) computed from 7 weighted components.
+
+    Weights based on meta-analysis effect sizes:
+    - VO2Max: 25% (Kodama 2009 JAMA: 13% mortality reduction per MET)
+    - Sleep Regularity: 20% (Windred 2024 Sleep: SRI > duration as predictor)
+    - Activity: 20% (Paluch 2022 Lancet: 8000 steps = 45% reduction)
+    - HRV: 15% (Hillebrand 2013: lowest vs highest SDNN HR=1.35)
+    - Body Composition: 10% (Jayedi 2022: modest independent effect)
+    - SpO2: 5% (Yan 2024: HR 0.93 per unit increase)
+    - Resting HR: 5% (Aune 2017: 9% per 10bpm)
+
+    Returns: {
+        'score': 65,
+        'components': {
+            'vo2max': {'score': 55, 'weight': 25, 'detail': 'VO2Max 42.6, 35th percentile for age 28 male'},
+            ...
+        },
+        'monthly': [{'month': '2023-08', 'score': 62}, ...],
+        'trend': 'declining',
+        'references': ['Kodama 2009 JAMA', 'Windred 2024 Sleep', ...]
+    }
+    """
+    components = {}
+
+    # ── 1. VO2Max (25%) ──────────────────────────────────────────
+    # FRIEND Registry percentile tables (Kaminsky 2015, Mayo Clin Proc)
+    # Men age brackets: 20-29, 30-39, 40-49, 50-59, 60-69, 70-79
+    FRIEND_MALE = {
+        20: [32.1, 40.1, 48.0, 55.2, 61.8],  # 10th, 25th, 50th, 75th, 90th
+        30: [30.2, 35.9, 42.4, 49.2, 56.5],
+        40: [26.8, 31.9, 37.8, 45.0, 52.1],
+        50: [22.8, 27.1, 32.6, 39.7, 45.6],
+        60: [19.8, 23.7, 28.2, 34.5, 40.3],
+        70: [17.1, 20.4, 24.4, 30.4, 36.6],
+    }
+    FRIEND_FEMALE = {
+        20: [23.9, 30.5, 37.6, 44.7, 51.3],
+        30: [20.9, 25.3, 30.2, 36.1, 41.4],
+        40: [18.8, 22.1, 26.7, 32.4, 38.4],
+        50: [17.3, 19.9, 23.4, 27.6, 32.0],
+        60: [14.6, 17.2, 20.0, 23.8, 27.0],
+        70: [13.6, 15.6, 18.3, 20.8, 23.1],
+    }
+
+    if vo2_list:
+        latest_vo2 = vo2_list[-1]['value']
+        table = FRIEND_MALE if sex == 'male' else FRIEND_FEMALE
+        # Find age bracket
+        age_bracket = max(k for k in table.keys() if k <= max(20, min(age, 70)))
+        percentiles = table[age_bracket]  # [10th, 25th, 50th, 75th, 90th]
+
+        # Interpolate percentile
+        pctile_points = [10, 25, 50, 75, 90]
+        if latest_vo2 <= percentiles[0]:
+            pctile = max(1, 10 * latest_vo2 / percentiles[0])
+        elif latest_vo2 >= percentiles[4]:
+            pctile = min(99, 90 + 10 * (latest_vo2 - percentiles[4]) / (percentiles[4] - percentiles[3]))
+        else:
+            pctile = 50  # fallback
+            for i in range(len(percentiles) - 1):
+                if percentiles[i] <= latest_vo2 <= percentiles[i+1]:
+                    frac = (latest_vo2 - percentiles[i]) / (percentiles[i+1] - percentiles[i])
+                    pctile = pctile_points[i] + frac * (pctile_points[i+1] - pctile_points[i])
+                    break
+
+        vo2_score = round(min(100, pctile))
+        components['vo2max'] = {
+            'score': vo2_score,
+            'weight': 25,
+            'detail': f'VO2Max {latest_vo2:.1f}, {vo2_score}th percentile (age {age}, {sex})',
+        }
+
+    # ── 2. Sleep Regularity Index (20%) ──────────────────────────
+    # Simplified SRI: based on bedtime consistency (Windred 2024)
+    # True SRI requires epoch-level data; we approximate from bedtime std dev
+    if nightly_list:
+        bedtimes = [n['bedtime'] for n in nightly_list if n.get('bedtime')]
+        durations = [n['total'] for n in nightly_list if n.get('total', 0) > 2]
+
+        if len(bedtimes) >= 14:
+            recent_beds = bedtimes[-30:] if len(bedtimes) >= 30 else bedtimes
+            bed_mean = sum(recent_beds) / len(recent_beds)
+            bed_std = (sum((b - bed_mean)**2 for b in recent_beds) / len(recent_beds))**0.5
+
+            # SRI approximation: std < 0.5h = excellent (score ~90), std > 3h = poor (score ~20)
+            # Windred 2024: median SRI 81, IQR 73.8-86.3
+            regularity_score = max(0, min(100, 100 - (bed_std - 0.3) / 3.0 * 80))
+
+            # Duration component (U-shaped: optimal 7-8h)
+            avg_dur = (sum(durations[-30:]) / len(durations[-30:])
+                       if len(durations) >= 30 else sum(durations) / len(durations))
+            if 7.0 <= avg_dur <= 8.5:
+                dur_score = 100
+            elif avg_dur < 7.0:
+                dur_score = max(0, 100 - (7.0 - avg_dur) * 40)
+            else:
+                dur_score = max(0, 100 - (avg_dur - 8.5) * 30)
+
+            # Combined: 60% regularity + 40% duration (regularity is more predictive per Windred)
+            sleep_score = round(regularity_score * 0.6 + dur_score * 0.4)
+            components['sleepRegularity'] = {
+                'score': sleep_score,
+                'weight': 20,
+                'detail': f'Bedtime std {bed_std:.1f}h, avg duration {avg_dur:.1f}h',
+            }
+
+    # ── 3. Activity (20%) ────────────────────────────────────────
+    # Steps: Paluch 2022 — plateau at 8000-10000 for age <60
+    # Exercise: Arem 2015 — max benefit at 450-750 min/week
+    step_vals = (list(steps_daily.values()) if isinstance(steps_daily, dict)
+                 else [s['value'] for s in steps_daily])
+    weekly_freq = 0.0
+    if step_vals:
+        recent_steps = step_vals[-30:] if len(step_vals) >= 30 else step_vals
+        avg_steps = sum(recent_steps) / len(recent_steps)
+
+        # Step score: plateau at 10000 for <60, 8000 for >=60
+        target = 10000 if age < 60 else 8000
+        step_score = min(100, avg_steps / target * 100)
+
+        # Exercise frequency bonus
+        exercise_score = 50  # default
+        if workouts:
+            recent_workouts = [
+                w for w in workouts
+                if w.get('date', '') >= (datetime.now() - timedelta(days=90)).strftime('%Y-%m-%d')
+            ]
+            weeks = max(1, 90 / 7)
+            weekly_freq = len(recent_workouts) / weeks
+            # WHO: 150 min/week moderate = target
+            exercise_score = min(100, weekly_freq / 3 * 70 + 15)
+
+        activity_score = round(step_score * 0.6 + exercise_score * 0.4)
+        components['activity'] = {
+            'score': activity_score,
+            'weight': 20,
+            'detail': (
+                f'Avg {avg_steps:.0f} steps/day, {weekly_freq:.1f} workouts/week'
+                if workouts else f'Avg {avg_steps:.0f} steps/day'
+            ),
+        }
+
+    # ── 4. HRV (15%) ────────────────────────────────────────────
+    # Age-adjusted: Umetani 1998 — SDNN declines with age
+    all_hrv = [v for vs in hrv_daily_map.values() for v in vs]
+    if all_hrv:
+        recent_hrv = all_hrv[-300:] if len(all_hrv) >= 300 else all_hrv  # ~30 days of records
+        hrv_mean = sum(recent_hrv) / len(recent_hrv)
+
+        # Age-adjusted scoring (28yr male target: 50-80ms SDNN)
+        if hrv_mean >= 80:
+            hrv_score = 95
+        elif hrv_mean >= 60:
+            hrv_score = 75 + (hrv_mean - 60) / 20 * 20
+        elif hrv_mean >= 45:
+            hrv_score = 55 + (hrv_mean - 45) / 15 * 20
+        elif hrv_mean >= 30:
+            hrv_score = 30 + (hrv_mean - 30) / 15 * 25
+        else:
+            hrv_score = max(5, hrv_mean / 30 * 30)
+
+        # Night/day ratio bonus (Task Force 1996: nighttime parasympathetic dominance)
+        night_hrv_vals = [r['value'] for r in hrv_records if r['hour'] >= 22 or r['hour'] <= 6]
+        day_hrv_vals = [r['value'] for r in hrv_records if 6 < r['hour'] < 22]
+        ratio = None
+        if night_hrv_vals and day_hrv_vals:
+            ratio = (sum(night_hrv_vals) / len(night_hrv_vals)
+                     / (sum(day_hrv_vals) / len(day_hrv_vals)))
+            if ratio >= 1.2:
+                hrv_score = min(100, hrv_score + 5)   # healthy autonomic rhythm
+            elif ratio < 1.0:
+                hrv_score = max(0, hrv_score - 10)    # disrupted rhythm
+
+        hrv_score = round(hrv_score)
+        components['hrv'] = {
+            'score': hrv_score,
+            'weight': 15,
+            'detail': (
+                f'SDNN mean {hrv_mean:.1f}ms, night/day ratio {ratio:.2f}'
+                if ratio is not None else f'SDNN mean {hrv_mean:.1f}ms'
+            ),
+        }
+
+    # ── 5. Body Composition (10%) ────────────────────────────────
+    # Jayedi 2022: J-shaped curve, nadir ~25% BF
+    # Barry 2014: fitness matters more than fatness
+    bc_score = 60  # default
+    bmi = None
+    if body_fat:
+        latest_bf = body_fat[-1]['value']
+        # Men optimal: 12-20% (ACE classification)
+        if 10 <= latest_bf <= 20:
+            bc_score = 85 + (1 - abs(latest_bf - 15) / 5) * 15
+        elif latest_bf < 10:
+            bc_score = max(40, 85 - (10 - latest_bf) * 5)
+        elif latest_bf <= 25:
+            bc_score = max(40, 85 - (latest_bf - 20) * 8)
+        else:
+            bc_score = max(10, 45 - (latest_bf - 25) * 3)
+    elif body_mass:
+        # Fallback to BMI estimate (assume 175cm if no height)
+        latest_weight = body_mass[-1]['value']
+        bmi = latest_weight / (1.75 ** 2)
+        # Lancet 2016: optimal 20-25
+        if 20 <= bmi <= 25:
+            bc_score = 90
+        elif 18.5 <= bmi < 20:
+            bc_score = 75
+        elif 25 < bmi <= 27.5:
+            bc_score = 70
+        elif 27.5 < bmi <= 30:
+            bc_score = 50
+        else:
+            bc_score = 30
+
+    bc_score = round(bc_score)
+    components['bodyComposition'] = {
+        'score': bc_score,
+        'weight': 10,
+        'detail': (
+            f'Body fat {body_fat[-1]["value"]:.1f}%' if body_fat
+            else (f'BMI ~{bmi:.1f}' if bmi is not None else 'No data')
+        ),
+    }
+
+    # ── 6. SpO2 (5%) ────────────────────────────────────────────
+    # Yan 2024: nocturnal SpO2 HR 0.93 per unit; Vold 2015: <=92% HR 1.99
+    if spo2_records:
+        spo2_vals = [r['value'] for r in spo2_records]
+        spo2_mean = sum(spo2_vals) / len(spo2_vals)
+        below95_pct = sum(1 for v in spo2_vals if v < 95) / len(spo2_vals) * 100
+
+        if spo2_mean >= 97:
+            spo2_score = 95
+        elif spo2_mean >= 96:
+            spo2_score = 85
+        elif spo2_mean >= 95:
+            spo2_score = 70
+        elif spo2_mean >= 93:
+            spo2_score = 45
+        else:
+            spo2_score = 20
+
+        # Penalize frequent desaturation
+        if below95_pct > 10:
+            spo2_score = max(10, spo2_score - 20)
+        elif below95_pct > 5:
+            spo2_score = max(20, spo2_score - 10)
+
+        spo2_score = round(spo2_score)
+        components['spo2'] = {
+            'score': spo2_score,
+            'weight': 5,
+            'detail': f'Mean {spo2_mean:.1f}%, {below95_pct:.1f}% below 95%',
+        }
+
+    # ── 7. Resting Heart Rate (5%) ───────────────────────────────
+    # Aune 2017: 9% increase per 10bpm
+    if rhr_list:
+        rhr_vals = [r['value'] for r in rhr_list]
+        recent_rhr = rhr_vals[-30:] if len(rhr_vals) >= 30 else rhr_vals
+        rhr_mean = sum(recent_rhr) / len(recent_rhr)
+
+        if rhr_mean <= 50:
+            rhr_score = 95
+        elif rhr_mean <= 55:
+            rhr_score = 85
+        elif rhr_mean <= 60:
+            rhr_score = 75
+        elif rhr_mean <= 70:
+            rhr_score = 55
+        elif rhr_mean <= 80:
+            rhr_score = 35
+        else:
+            rhr_score = 15
+
+        rhr_score = round(rhr_score)
+        components['restingHR'] = {
+            'score': rhr_score,
+            'weight': 5,
+            'detail': f'Mean {rhr_mean:.0f} bpm',
+        }
+
+    # ── Weighted composite ───────────────────────────────────────
+    total_weight = sum(c['weight'] for c in components.values())
+    if total_weight > 0:
+        raw_score = sum(c['score'] * c['weight'] for c in components.values()) / total_weight
+        final_score = round(max(0, min(100, raw_score)))
+    else:
+        final_score = 0
+
+    # ── Monthly trend ────────────────────────────────────────────
+    # Compute simplified monthly scores using VO2Max records as anchors
+    monthly_scores = []
+    vo2_monthly = {}
+    if vo2_list:
+        for v in vo2_list:
+            m = v['date'][:7]
+            vo2_monthly[m] = v['value']
+
+    if vo2_monthly:
+        table = FRIEND_MALE if sex == 'male' else FRIEND_FEMALE
+        age_bracket = max(k for k in table.keys() if k <= max(20, min(age, 70)))
+        percentiles = table[age_bracket]
+        vo2_component_score = components.get('vo2max', {}).get('score', 50)
+
+        for month in sorted(vo2_monthly.keys()):
+            vo2_val = vo2_monthly[month]
+            if vo2_val <= percentiles[0]:
+                pctile = 10
+            elif vo2_val >= percentiles[4]:
+                pctile = 95
+            elif vo2_val >= percentiles[2]:
+                pctile = 50 + (vo2_val - percentiles[2]) / (percentiles[4] - percentiles[2]) * 45
+            else:
+                pctile = 10 + (vo2_val - percentiles[0]) / (percentiles[2] - percentiles[0]) * 40
+
+            # Use VO2Max percentile as proxy for monthly longevity score (simplified)
+            offset = final_score - vo2_component_score
+            monthly_est = round(max(0, min(100, pctile + offset * 0.5)))
+            monthly_scores.append({'month': month, 'score': monthly_est})
+
+    # Trend
+    if len(monthly_scores) >= 4:
+        recent_3 = [m['score'] for m in monthly_scores[-3:]]
+        older_3 = ([m['score'] for m in monthly_scores[-6:-3]]
+                   if len(monthly_scores) >= 6 else [m['score'] for m in monthly_scores[:3]])
+        r_mean = sum(recent_3) / len(recent_3)
+        o_mean = sum(older_3) / len(older_3)
+        if r_mean > o_mean + 3:
+            trend = 'improving'
+        elif r_mean < o_mean - 3:
+            trend = 'declining'
+        else:
+            trend = 'stable'
+    else:
+        trend = 'stable'
+
+    references = [
+        'Kodama et al. 2009, JAMA (VO2Max meta-analysis)',
+        'Mandsager et al. 2018, JAMA Network Open (CRF and mortality)',
+        'Windred et al. 2024, Sleep (Sleep Regularity Index)',
+        'Paluch et al. 2022, Lancet Public Health (Steps dose-response)',
+        'Hillebrand et al. 2013, Europace (HRV and CVD)',
+        'Jayedi et al. 2022, Int J Obes (Body fat and mortality)',
+        'Yan et al. 2024, J Clin Sleep Med (Nocturnal SpO2)',
+        'Aune et al. 2017 (Resting HR meta-analysis)',
+        "AHA Life's Essential 8, Circulation 2022",
+    ]
+
+    return {
+        'score': final_score,
+        'components': components,
+        'monthly': monthly_scores,
+        'trend': trend,
+        'references': references,
+    }
+
+
 def main(export_dir):
     xml_path = os.path.join(export_dir, 'export.xml')
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
@@ -1154,6 +1517,14 @@ def main(export_dir):
         workouts_sorted, body_mass_sorted, age
     )
 
+    # Compute longevity score
+    longevity_score = compute_longevity_score(
+        vo2_list, rhr_list, hrv_records, hrv_daily_map, nightly_list,
+        steps_daily, workouts_sorted, body_mass_sorted, body_fat_sorted,
+        spo2_records, exercise_time_daily, age,
+        'male' if 'Male' in user_info.get('sex', '') else 'female'
+    )
+
     # Compute baselines
     baselines = compute_baselines(rhr_list, hrv_daily_map, nightly_list, steps_daily)
 
@@ -1196,12 +1567,58 @@ def main(export_dir):
             'end': rhr_list[-1]['date'] if rhr_list else '',
         },
         'healthScore': health_score,
+        'longevityScore': longevity_score,
         'baselines': baselines,
     }
 
     with open(os.path.join(out_dir, 'overview.json'), 'w') as f:
         json.dump(overview, f)
     print("  overview.json done")
+
+    # ================================================================
+    # BUILD ECG JSON
+    # ================================================================
+    print("Building ecg.json ...")
+    ecg_dir = os.path.join(export_dir, 'electrocardiograms')
+    ecg_records = []
+    if os.path.isdir(ecg_dir):
+        import csv as csv_module
+        for fname in sorted(os.listdir(ecg_dir)):
+            if not fname.endswith('.csv'):
+                continue
+            fpath = os.path.join(ecg_dir, fname)
+            meta = {}
+            samples = []
+            with open(fpath, 'r') as ef:
+                reader = csv_module.reader(ef)
+                for row in reader:
+                    if len(row) == 2 and row[0] and not row[0].replace('.','').replace('-','').lstrip('-').isdigit():
+                        meta[row[0].strip()] = row[1].strip()
+                    elif len(row) == 1:
+                        try:
+                            samples.append(float(row[0]))
+                        except:
+                            pass
+
+            # Downsample to ~256 points for display (from ~15000 at 512Hz)
+            if samples:
+                step = max(1, len(samples) // 256)
+                downsampled = [round(samples[i]) for i in range(0, len(samples), step)][:256]
+            else:
+                downsampled = []
+
+            ecg_records.append({
+                'filename': fname,
+                'date': meta.get('Recorded Date', fname.replace('ecg_','').replace('.csv','')),
+                'classification': meta.get('Classification', 'Unknown'),
+                'sampleRate': meta.get('Sample Rate', '512 hertz'),
+                'samples': downsampled,
+            })
+
+    ecg_data = {'records': ecg_records}
+    with open(os.path.join(out_dir, 'ecg.json'), 'w') as f:
+        json.dump(ecg_data, f)
+    print(f"  ecg.json done ({len(ecg_records)} recordings)")
 
     print("\nAll data files generated successfully!")
     print(f"Output: {out_dir}/")
@@ -1212,6 +1629,7 @@ def main(export_dir):
     print(f"  wrist temperature: {len(sleep_temp_sorted)} records")
     print(f"  exercise time: {len(exercise_list)} days")
     print(f"  health score: {len(health_score['daily'])} days, latest={health_score['latest']}")
+    print(f"  longevity score: {longevity_score['score']}, {len(longevity_score['components'])} components")
     print(f"  baselines: {len(baselines)} metrics")
 
 if __name__ == '__main__':

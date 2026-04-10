@@ -1,0 +1,63 @@
+@media print {
+  /* Force light colors for printing */
+  :root {
+    --bg-base: #fff !important;
+    --bg-card: #fff !important;
+    --bg-surface: #fff !important;
+    --bg-inset: #f5f5f5 !important;
+    --text-heading: #111 !important;
+    --text-primary: #333 !important;
+    --text-secondary: #666 !important;
+    --text-muted: #999 !important;
+    --border: #e0e0e0 !important;
+    --border-subtle: #eee !important;
+    --shadow-card: none !important;
+    color-scheme: light !important;
+  }
+
+  /* Hide interactive elements */
+  .app-header,
+  .tab-nav,
+  .header-meta,
+  .date-range-picker,
+  .theme-toggle,
+  .lang-toggle,
+  .print-hide {
+    display: none !important;
+  }
+
+  /* Show all panels */
+  [role="tabpanel"] {
+    display: block !important;
+  }
+  [role="tabpanel"][hidden] {
+    display: block !important;
+  }
+
+  /* Page breaks */
+  .panel {
+    page-break-before: always;
+  }
+  .panel:first-child {
+    page-break-before: avoid;
+  }
+  .chart-card, .card {
+    page-break-inside: avoid;
+  }
+
+  /* Ensure charts are visible */
+  .recharts-responsive-container {
+    page-break-inside: avoid;
+  }
+
+  /* Compact spacing */
+  .app-main {
+    padding: 0 !important;
+    max-width: 100% !important;
+  }
+
+  body {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+}

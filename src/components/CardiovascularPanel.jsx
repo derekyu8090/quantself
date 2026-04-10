@@ -34,31 +34,8 @@ import {
 } from 'recharts';
 import StatCard from './StatCard';
 import { getChartTheme } from '../chartTheme';
-
-// ─── helpers ──────────────────────────────────────────────────────────────────
-
-/** "2023-08" → "Aug '23" */
-function fmtMonth(str) {
-  if (!str) return '';
-  const [y, m] = str.split('-');
-  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${names[parseInt(m, 10) - 1]} '${y.slice(2)}`;
-}
-
-/** "2023-08-04" → "Aug 4, 2023" */
-function fmtDate(str) {
-  if (!str) return '';
-  const d = new Date(str + 'T00:00:00');
-  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
-}
-
-/** Format hour 0–23 → "12 AM", "3 PM", etc. */
-function fmtHour(h) {
-  if (h === 0)  return '12 AM';
-  if (h < 12)  return `${h} AM`;
-  if (h === 12) return '12 PM';
-  return `${h - 12} PM`;
-}
+import { fmtMonth, fmtDate, fmtHour, filterByDateRange } from '../utils/dataUtils';
+import { useDateRange } from '../contexts/DateRangeContext';
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
@@ -379,7 +356,16 @@ function CardiovascularPanel({ data, overview, t }) {
     );
   }
 
+  const theme = getChartTheme();
+  const { startDate, endDate } = useDateRange();
   const { rhr, hrv, vo2max, walkingHR, hrHourly, spo2 } = data;
+
+  // Filtered chart data — stat cards always use all-time stats above
+  const rhrMonthlyFiltered   = filterByDateRange(rhr?.monthly,                startDate, endDate, 'month');
+  const hrvMonthlyFiltered   = filterByDateRange(hrv?.monthly,                startDate, endDate, 'month');
+  const vo2RecordsFiltered   = filterByDateRange(vo2max?.records,             startDate, endDate);
+  const walkingHRFiltered    = filterByDateRange(walkingHR?.monthly,          startDate, endDate, 'month');
+  const filteredRespMonthly  = filterByDateRange(data.respiratory?.monthly,   startDate, endDate, 'month');
 
   // ── stat card derived values ──────────────────────────────────────────────
   const rhrLatest   = rhr?.stats?.latest  ?? null;
@@ -467,7 +453,7 @@ function CardiovascularPanel({ data, overview, t }) {
           </div>
         </div>
         <RHRChart
-          monthly={rhr?.monthly}
+          monthly={rhrMonthlyFiltered}
           overallMean={rhrMean != null ? +rhrMean.toFixed(1) : null}
         />
       </div>
@@ -481,7 +467,7 @@ function CardiovascularPanel({ data, overview, t }) {
           </div>
         </div>
         <HRVChart
-          monthly={hrv?.monthly}
+          monthly={hrvMonthlyFiltered}
           overallMean={hrv?.stats?.mean != null ? +hrv.stats.mean.toFixed(1) : null}
         />
       </div>
@@ -499,7 +485,7 @@ function CardiovascularPanel({ data, overview, t }) {
             </div>
           </div>
           <VO2MaxChart
-            records={vo2max?.records}
+            records={vo2RecordsFiltered}
             peak={vo2Peak}
             mean={vo2max?.stats?.mean != null ? +vo2max.stats.mean.toFixed(1) : null}
           />
@@ -524,8 +510,62 @@ function CardiovascularPanel({ data, overview, t }) {
             <p className="chart-card-title">{t?.('cardio.walkingHRTrend') ?? 'Monthly Mean Trend'}</p>
           </div>
         </div>
-        <WalkingHRChart monthly={walkingHR?.monthly} />
+        <WalkingHRChart monthly={walkingHRFiltered} />
       </div>
+
+      {/* ── Row 6: SpO2 Hourly Profile ────────────────────────────────── */}
+      {data.spo2?.hourly?.length > 0 && (
+        <div className="chart-card" role="region" aria-label="SpO2 24-hour profile chart">
+          <div className="chart-card-header">
+            <div>
+              <h3 className="section-title">{t?.('cardio.spo2') ?? 'SpO2'}</h3>
+              <p className="chart-card-title">{t?.('cardio.spo2Hourly') ?? '24-Hour SpO2 Profile'}</p>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={data.spo2.hourly} barCategoryGap="20%">
+              <CartesianGrid stroke={theme.grid.stroke} strokeDasharray="0" vertical={false} />
+              <XAxis dataKey="hour" {...theme.xAxis} tickFormatter={(h) => fmtHour(h)} />
+              <YAxis {...theme.yAxis} domain={[90, 100]} />
+              <Tooltip contentStyle={theme.tooltip.contentStyle} labelStyle={theme.tooltip.labelStyle} />
+              <Bar dataKey="mean" fill="var(--color-spo2)" fillOpacity={0.85} radius={[3, 3, 0, 0]} maxBarSize={20} name="Mean SpO2 %" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* ── Row 7: Respiratory Rate Monthly Trend ────────────────────── */}
+      {data.respiratory?.monthly?.length > 0 && (
+        <div className="chart-card" role="region" aria-label="Respiratory rate monthly trend chart">
+          <div className="chart-card-header">
+            <div>
+              <h3 className="section-title">{t?.('cardio.respiratory') ?? 'Respiratory Rate'}</h3>
+              <p className="chart-card-title">{t?.('cardio.respiratoryTrend') ?? 'Monthly Mean Trend'}</p>
+              <p className="chart-card-sub">
+                {t?.('cardio.respiratorySub')
+                  ? `Overall: ${data.respiratory.stats?.mean ?? '--'} · Night: ${data.respiratory.stats?.nightMean ?? '--'} ${t('cardio.respiratorySub')}`
+                  : `Overall: ${data.respiratory.stats?.mean ?? '--'} · Night: ${data.respiratory.stats?.nightMean ?? '--'} breaths/min`}
+              </p>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={filteredRespMonthly}>
+              <defs>
+                <linearGradient id="respGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor="var(--color-spo2)" stopOpacity={0.18} />
+                  <stop offset="60%" stopColor="var(--color-spo2)" stopOpacity={0.04} />
+                  <stop offset="100%" stopColor="var(--color-spo2)" stopOpacity={0} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={theme.grid.stroke} strokeDasharray="0" vertical={false} />
+              <XAxis dataKey="month" {...theme.xAxis} tickFormatter={(m) => fmtMonth(m)} />
+              <YAxis {...theme.yAxis} />
+              <Tooltip contentStyle={theme.tooltip.contentStyle} labelStyle={theme.tooltip.labelStyle} />
+              <Area type="monotone" dataKey="mean" stroke="var(--color-spo2)" fill="url(#respGrad)" strokeWidth={2} dot={false} activeDot={theme.activeDot('var(--color-spo2)')} name="Breaths/min" />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
 
     </div>
   );

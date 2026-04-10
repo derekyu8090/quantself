@@ -8,9 +8,13 @@
 
 import StatCard from './StatCard';
 import { getChartTheme } from '../chartTheme';
+import { fmtDateShortZh as formatDate, fmtMonthShortZh as formatMonth, filterByDateRange } from '../utils/dataUtils';
+import { useDateRange } from '../contexts/DateRangeContext';
 import {
   BarChart,
   Bar,
+  AreaChart,
+  Area,
   LineChart,
   Line,
   ScatterChart,
@@ -23,21 +27,6 @@ import {
   ResponsiveContainer,
   Cell,
 } from 'recharts';
-
-// ─── helpers ─────────────────────────────────────────────────────────────────
-
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d)) return dateStr;
-  return d.toLocaleDateString('zh-CN', { month: '2-digit', day: '2-digit' });
-}
-
-function formatMonth(monthStr) {
-  if (!monthStr) return '';
-  const [, m] = monthStr.split('-');
-  return m ? `${parseInt(m, 10)}月` : monthStr;
-}
 
 function classifyHRZone(avgHR) {
   if (avgHR == null) return null;
@@ -294,9 +283,111 @@ function SwimHRZoneChart({ swimWorkouts }) {
   );
 }
 
+function ExerciseTimeChart({ data, recommendedLabel }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <BarChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" min" />
+        <Tooltip content={<ChartTooltip unit=" min" />} />
+        <ReferenceLine
+          y={30}
+          stroke={theme.referenceLine.stroke}
+          strokeDasharray={theme.referenceLine.strokeDasharray}
+          strokeOpacity={theme.referenceLine.strokeOpacity}
+          label={{ value: recommendedLabel ?? '推荐 30min', fill: 'var(--text-muted)', fontSize: 11, position: 'right' }}
+        />
+        <Bar dataKey="mean" fill="var(--color-hrv)" radius={[4, 4, 0, 0]} maxBarSize={30} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function StandHoursChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  const gradientId = 'standHoursGradient';
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <AreaChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="var(--color-activity)" stopOpacity={0.35} />
+            <stop offset="50%" stopColor="var(--color-activity)" stopOpacity={0.15} />
+            <stop offset="95%" stopColor="var(--color-activity)" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" h" />
+        <Tooltip content={<ChartTooltip unit=" h" />} />
+        <Area
+          type="monotone"
+          dataKey="mean"
+          stroke="var(--color-activity)"
+          strokeWidth={2}
+          fill={`url(#${gradientId})`}
+          dot={false}
+          activeDot={theme.activeDot('var(--color-activity)')}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 function ActivityPanel({ data, t }) {
+  const { startDate, endDate } = useDateRange();
+
+  const steps = data?.steps ?? {};
+  const stats = steps.stats ?? {};
+  const bodyMassData = data?.bodyMass ?? [];
+  // latestWeight always uses the most recent record regardless of filter
+  const latestWeight = bodyMassData.length ? bodyMassData[bodyMassData.length - 1].value : null;
+
+  // Filtered chart data — stat cards above always use all-time stats
+  const stepsMonthlyFiltered   = filterByDateRange(steps.monthly,        startDate, endDate, 'month');
+  const workoutMonthlyFiltered = filterByDateRange(data?.workoutMonthly, startDate, endDate, 'month');
+  const bodyMassFiltered       = filterByDateRange(bodyMassData,         startDate, endDate);
+  const swimWorkoutsFiltered   = filterByDateRange(data?.swimWorkouts,   startDate, endDate);
+  const workoutsFiltered       = filterByDateRange(data?.workouts,       startDate, endDate);
+
+  // active days pct from above10000pct as proxy
+  const activeDaysPct = stats.above10000pct ?? null;
+
+  // Exercise time monthly — group daily records, then filter by date range
+  const exerciseMonthlyGroups = {};
+  for (const r of data?.exerciseTime?.daily ?? []) {
+    const m = r.date.slice(0, 7);
+    if (!exerciseMonthlyGroups[m]) exerciseMonthlyGroups[m] = [];
+    exerciseMonthlyGroups[m].push(r.value);
+  }
+  const exerciseMonthly = Object.entries(exerciseMonthlyGroups).sort().map(([month, vals]) => ({
+    month,
+    mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length),
+  }));
+  const exerciseMonthlyFiltered = filterByDateRange(exerciseMonthly, startDate, endDate, 'month');
+
+  // Stand hours monthly — group activitySummary standHours, then filter by date range
+  const standMonthlyGroups = {};
+  for (const r of data?.activitySummary ?? []) {
+    if (!r.date || !r.standHours) continue;
+    const m = r.date.slice(0, 7);
+    if (!standMonthlyGroups[m]) standMonthlyGroups[m] = [];
+    standMonthlyGroups[m].push(r.standHours);
+  }
+  const standMonthly = Object.entries(standMonthlyGroups).sort().map(([month, vals]) => ({
+    month,
+    mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10,
+  }));
+  const standMonthlyFiltered = filterByDateRange(standMonthly, startDate, endDate, 'month');
+
   if (!data) {
     return (
       <div className="card" style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '60px' }}>
@@ -304,14 +395,6 @@ function ActivityPanel({ data, t }) {
       </div>
     );
   }
-
-  const steps = data.steps ?? {};
-  const stats = steps.stats ?? {};
-  const bodyMassData = data.bodyMass ?? [];
-  const latestWeight = bodyMassData.length ? bodyMassData[bodyMassData.length - 1].value : null;
-
-  // active days pct from above10000pct as proxy
-  const activeDaysPct = stats.above10000pct ?? null;
 
   return (
     <div className="panel" role="main" aria-label="活动面板">
@@ -351,7 +434,7 @@ function ActivityPanel({ data, t }) {
             <div className="chart-card-title">{t?.('activity.monthlySteps') ?? '月均步数趋势'}</div>
           </div>
         </div>
-        <MonthlyStepsChart data={steps.monthly} />
+        <MonthlyStepsChart data={stepsMonthlyFiltered} />
       </div>
 
       {/* ── Row 3: workout frequency + body weight ── */}
@@ -360,33 +443,58 @@ function ActivityPanel({ data, t }) {
           <div className="chart-card-header">
             <div className="chart-card-title">{t?.('activity.monthlyWorkouts') ?? '月度训练频率'}</div>
           </div>
-          <MonthlyWorkoutChart data={data.workoutMonthly} />
+          <MonthlyWorkoutChart data={workoutMonthlyFiltered} />
         </div>
         <div className="chart-card">
           <div className="chart-card-header">
             <div className="chart-card-title">{t?.('activity.weightTrend') ?? '体重趋势'}</div>
           </div>
-          <BodyWeightChart data={bodyMassData} />
+          <BodyWeightChart data={bodyMassFiltered} />
         </div>
       </div>
 
-      {/* ── Row 4: recent workouts table ── */}
-      <div className="card">
-        <p className="section-title" style={{ marginBottom: '16px' }}>{t?.('activity.recentWorkouts') ?? '最近 15 次训练'}</p>
-        <RecentWorkoutsTable workouts={data.workouts} t={t} />
+      {/* ── Row 4: exercise time + stand hours ── */}
+      <div className="two-col">
+        <div className="chart-card">
+          <div className="chart-card-header">
+            <div>
+              <div className="chart-card-title">{t?.('activity.exerciseTime') ?? '日均锻炼时长'}</div>
+              <div className="chart-card-sub">{t?.('activity.exerciseTimeSub') ?? '月均值（分钟）'}</div>
+            </div>
+          </div>
+          <ExerciseTimeChart
+            data={exerciseMonthlyFiltered}
+            recommendedLabel={`${t?.('activity.recommended') ?? '推荐'} 30min`}
+          />
+        </div>
+        <div className="chart-card">
+          <div className="chart-card-header">
+            <div>
+              <div className="chart-card-title">{t?.('activity.standHours') ?? '站立时长'}</div>
+              <div className="chart-card-sub">{t?.('activity.standHoursSub') ?? '月均值'}</div>
+            </div>
+          </div>
+          <StandHoursChart data={standMonthlyFiltered} />
+        </div>
       </div>
 
-      {/* ── Row 5: swimming analysis ── */}
+      {/* ── Row 5: recent workouts table ── */}
+      <div className="card">
+        <p className="section-title" style={{ marginBottom: '16px' }}>{t?.('activity.recentWorkouts') ?? '最近 15 次训练'}</p>
+        <RecentWorkoutsTable workouts={workoutsFiltered} t={t} />
+      </div>
+
+      {/* ── Row 6: swimming analysis ── */}
       <div className="card">
         <p className="section-title" style={{ marginBottom: '16px' }}>{t?.('activity.swimAnalysis') ?? '游泳分析'}</p>
         <div className="two-col">
           <div>
             <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>{t?.('activity.swimDuration') ?? '训练时长趋势'}</p>
-            <SwimDurationScatter swimWorkouts={data.swimWorkouts} />
+            <SwimDurationScatter swimWorkouts={swimWorkoutsFiltered} />
           </div>
           <div>
             <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>{t?.('activity.swimHRZone') ?? '心率区间分布'}</p>
-            <SwimHRZoneChart swimWorkouts={data.swimWorkouts} />
+            <SwimHRZoneChart swimWorkouts={swimWorkoutsFiltered} />
           </div>
         </div>
       </div>

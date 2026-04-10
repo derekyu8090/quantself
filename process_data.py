@@ -17,6 +17,7 @@ import xml.etree.ElementTree as ET
 import json
 import os
 import sys
+import statistics
 from datetime import datetime, timedelta
 from collections import defaultdict
 
@@ -28,6 +29,273 @@ def parse_date(s):
         return datetime.strptime(s[:19], '%Y-%m-%d %H:%M:%S')
     except:
         return None
+
+
+def score_to_level(score):
+    """Map 0-100 score to risk level string."""
+    if score >= 70: return 'high'
+    if score >= 55: return 'medium-high'
+    if score >= 40: return 'medium'
+    if score >= 25: return 'low-medium'
+    return 'low'
+
+
+def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
+                  body_mass, body_fat, spo2_records, sleep_breathing,
+                  workouts, exercise_time_daily, all_beds, age):
+    """Compute 6 risk dimensions from actual health data. Returns dict."""
+
+    risks = {}
+
+    # 1. Circadian Rhythm Risk
+    # Based on: bedtime std deviation, % nights after midnight, bedtime consistency
+    if all_beds:
+        bed_std = statistics.stdev(all_beds) if len(all_beds) > 1 else 0
+        after_midnight_pct = sum(1 for b in all_beds if b > 24) / len(all_beds) * 100
+        after_2am_pct = sum(1 for b in all_beds if b > 26) / len(all_beds) * 100
+
+        # Score: 0 (healthy) to 100 (severe disruption)
+        # bed_std > 2h = very bad, after_2am > 50% = very bad
+        score = min(100, int(
+            (min(bed_std, 4) / 4 * 40) +       # std dev component (max 40)
+            (min(after_midnight_pct, 100) / 100 * 30) +  # after midnight (max 30)
+            (min(after_2am_pct, 100) / 100 * 30)         # after 2am (max 30)
+        ))
+        risks['circadianRhythm'] = {
+            'level': score_to_level(score),
+            'score': score,
+            'label': '昼夜节律障碍',
+        }
+    else:
+        risks['circadianRhythm'] = {'level': 'low', 'score': 0, 'label': '昼夜节律障碍'}
+
+    # 2. Cardio Fitness Risk
+    # Based on: VO2Max percentile for age, VO2Max trend direction
+    if vo2_list:
+        latest_vo2 = vo2_list[-1]['value']
+        # Age-adjusted thresholds for males 25-30
+        if latest_vo2 >= 49: vo2_score = 5
+        elif latest_vo2 >= 44: vo2_score = 25
+        elif latest_vo2 >= 39: vo2_score = 50
+        elif latest_vo2 >= 35: vo2_score = 75
+        else: vo2_score = 90
+
+        # Trend: compare last 3 months vs previous 3 months
+        if len(vo2_list) >= 4:
+            recent = [v['value'] for v in vo2_list[-3:]]
+            older = [v['value'] for v in vo2_list[:-3]]
+            if older:
+                trend_delta = sum(recent) / len(recent) - sum(older) / len(older)
+                if trend_delta < -3: vo2_score = min(100, vo2_score + 15)   # declining fast
+                elif trend_delta < -1: vo2_score = min(100, vo2_score + 5)  # declining slowly
+                elif trend_delta > 1: vo2_score = max(0, vo2_score - 10)    # improving
+
+        risks['cardioFitness'] = {
+            'level': score_to_level(vo2_score),
+            'score': vo2_score,
+            'label': '心肺功能退化',
+        }
+    else:
+        risks['cardioFitness'] = {'level': 'low', 'score': 0, 'label': '心肺功能退化'}
+
+    # 3. Chronic Stress Risk
+    # Based on: HRV mean vs age baseline, HRV night/day ratio, RHR elevation
+    hrv_values = [r['value'] for r in hrv_records]
+    rhr_values = [r['value'] for r in rhr_list]
+    if hrv_values:
+        hrv_mean = sum(hrv_values) / len(hrv_values)
+        # For age 28 male, healthy HRV should be 50-80ms
+        if hrv_mean < 30: hrv_score = 80
+        elif hrv_mean < 40: hrv_score = 60
+        elif hrv_mean < 50: hrv_score = 40
+        elif hrv_mean < 60: hrv_score = 25
+        else: hrv_score = 10
+
+        # Night/day ratio check
+        night_hrv = [r['value'] for r in hrv_records if r['hour'] >= 22 or r['hour'] <= 6]
+        day_hrv = [r['value'] for r in hrv_records if 6 < r['hour'] < 22]
+        if night_hrv and day_hrv:
+            ratio = sum(night_hrv) / len(night_hrv) / (sum(day_hrv) / len(day_hrv))
+            if ratio < 1.05: hrv_score = min(100, hrv_score + 15)  # No night advantage = bad
+
+        risks['chronicStress'] = {
+            'level': score_to_level(hrv_score),
+            'score': hrv_score,
+            'label': '过劳/慢性压力',
+        }
+    else:
+        risks['chronicStress'] = {'level': 'low', 'score': 0, 'label': '过劳/慢性压力'}
+
+    # 4. Metabolic Risk
+    # Based on: body fat %, weight trend, exercise frequency, step count
+    met_score = 0
+    if body_fat:
+        latest_bf = body_fat[-1]['value']
+        if latest_bf > 25: met_score += 40
+        elif latest_bf > 20: met_score += 20
+        elif latest_bf > 15: met_score += 5
+
+    step_vals = list(steps_daily.values()) if isinstance(steps_daily, dict) else [s['value'] for s in steps_daily]
+    if step_vals:
+        avg_steps = sum(step_vals) / len(step_vals)
+        if avg_steps < 4000: met_score += 30
+        elif avg_steps < 6000: met_score += 20
+        elif avg_steps < 8000: met_score += 10
+
+    # Weight trend (last 6 months)
+    if len(body_mass) >= 2:
+        recent_weight = body_mass[-1]['value']
+        older_weights = [b['value'] for b in body_mass[:-1]]
+        avg_older = sum(older_weights) / len(older_weights)
+        if recent_weight > avg_older + 3: met_score += 15   # gaining
+        elif recent_weight > avg_older + 1: met_score += 5
+
+    # Exercise frequency
+    if workouts:
+        days_span = max(1, (datetime.strptime(workouts[-1].get('date', '2026-01-01'), '%Y-%m-%d') -
+                            datetime.strptime(workouts[0].get('date', '2020-01-01'), '%Y-%m-%d')).days)
+        weekly_freq = len(workouts) / (days_span / 7)
+        if weekly_freq < 1: met_score += 15
+        elif weekly_freq < 2: met_score += 5
+
+    met_score = min(100, met_score)
+    risks['metabolicRisk'] = {
+        'level': score_to_level(met_score),
+        'score': met_score,
+        'label': '代谢综合征前兆',
+    }
+
+    # 5. Cardiovascular Event Risk
+    # Based on: RHR anomaly frequency, SpO2 drops, HRV stability
+    cv_score = 0
+    rhr_values = [r['value'] for r in rhr_list]
+    if rhr_values:
+        rhr_mean = sum(rhr_values) / len(rhr_values)
+        rhr_std = (sum((v - rhr_mean) ** 2 for v in rhr_values) / len(rhr_values)) ** 0.5
+        anomaly_count = sum(1 for v in rhr_values if v > rhr_mean + 2 * rhr_std)
+        anomaly_pct = anomaly_count / len(rhr_values) * 100
+        if anomaly_pct > 5: cv_score += 20
+        elif anomaly_pct > 2: cv_score += 10
+
+    if spo2_records:
+        spo2_vals = [r['value'] for r in spo2_records]
+        below90 = sum(1 for v in spo2_vals if v < 90) / len(spo2_vals) * 100
+        if below90 > 2: cv_score += 25
+        elif below90 > 0.5: cv_score += 10
+
+    # Low resting HR is protective
+    if rhr_values:
+        rhr_mean = sum(rhr_values) / len(rhr_values)
+        if rhr_mean < 55: cv_score = max(0, cv_score - 10)  # athletic heart is protective
+        elif rhr_mean > 75: cv_score += 20
+
+    cv_score = min(100, max(0, cv_score))
+    risks['cardiovascularEvent'] = {
+        'level': score_to_level(cv_score),
+        'score': cv_score,
+        'label': '心血管急性事件',
+    }
+
+    # 6. Sleep Apnea Risk
+    # Based on: breathing disturbance index, SpO2 night drops
+    apnea_score = 0
+    if sleep_breathing:
+        avg_bd = sum(b['value'] for b in sleep_breathing) / len(sleep_breathing)
+        high_bd_pct = sum(1 for b in sleep_breathing if b['value'] >= 5) / len(sleep_breathing) * 100
+        if avg_bd > 5: apnea_score += 50
+        elif avg_bd > 3: apnea_score += 30
+        elif avg_bd > 1.5: apnea_score += 15
+        apnea_score += min(30, int(high_bd_pct * 3))
+
+    if spo2_records:
+        night_spo2 = [r['value'] for r in spo2_records if r['hour'] >= 22 or r['hour'] <= 6]
+        if night_spo2:
+            night_below95 = sum(1 for v in night_spo2 if v < 95) / len(night_spo2) * 100
+            if night_below95 > 10: apnea_score += 20
+            elif night_below95 > 5: apnea_score += 10
+
+    apnea_score = min(100, apnea_score)
+    risks['sleepApnea'] = {
+        'level': score_to_level(apnea_score),
+        'score': apnea_score,
+        'label': '睡眠呼吸障碍',
+    }
+
+    return risks
+
+
+def compute_goals(rhr_stats, hrv_stats, steps_stats, body_mass, nightly_list, workouts, all_beds):
+    """Compute personalized goal targets based on current data."""
+    goals = {}
+
+    # Bedtime goal: move 1h earlier in 2 weeks, 2h in 4 weeks
+    if all_beds:
+        current_bed = (round(sum(all_beds[-30:]) / len(all_beds[-30:]), 1)
+                       if len(all_beds) >= 30
+                       else round(sum(all_beds) / len(all_beds), 1))
+        goals['bedtime'] = {
+            'current': current_bed,
+            'target2w': round(max(22, current_bed - 1), 1),
+            'target4w': round(max(22, current_bed - 2), 1),
+            'unit': 'h', 'label': '入睡时间',
+        }
+
+    # HRV goal: +5ms in 2w, +10ms in 4w
+    if hrv_stats.get('mean'):
+        goals['hrv'] = {
+            'current': hrv_stats['mean'],
+            'target2w': round(hrv_stats['mean'] + 5, 1),
+            'target4w': round(hrv_stats['mean'] + 10, 1),
+            'unit': 'ms', 'label': 'HRV SDNN',
+        }
+
+    # RHR goal: maintain or lower
+    if rhr_stats.get('latest'):
+        goals['rhr'] = {
+            'current': rhr_stats['latest'],
+            'target2w': min(rhr_stats['latest'], 55),
+            'target4w': min(rhr_stats['latest'], 55),
+            'unit': 'bpm', 'label': '静息心率',
+        }
+
+    # Steps goal: increase toward 8000
+    step_vals = [s['value'] for s in steps_stats] if isinstance(steps_stats, list) else []
+    current_steps = (round(sum(step_vals[-30:]) / len(step_vals[-30:]))
+                     if len(step_vals) >= 30
+                     else (steps_stats.get('mean', 5000) if isinstance(steps_stats, dict) else 5000))
+    goals['steps'] = {
+        'current': current_steps,
+        'target2w': min(max(current_steps + 1000, 7000), 10000),
+        'target4w': min(max(current_steps + 2000, 8000), 12000),
+        'unit': '步', 'label': '日均步数',
+    }
+
+    # Exercise frequency
+    if workouts and len(workouts) >= 2:
+        days_span = max(7, (datetime.strptime(workouts[-1].get('date', '2026-01-01'), '%Y-%m-%d') -
+                            datetime.strptime(workouts[max(0, len(workouts) - 30)].get('date', '2020-01-01'), '%Y-%m-%d')).days)
+        recent_workouts = workouts[-30:]
+        current_freq = round(len(recent_workouts) / (days_span / 7), 1)
+    else:
+        current_freq = 1.0
+    goals['exerciseFreq'] = {
+        'current': current_freq,
+        'target2w': max(current_freq + 1, 3),
+        'target4w': max(current_freq + 2, 4),
+        'unit': '次/周', 'label': '周运动次数',
+    }
+
+    # Weight
+    if body_mass:
+        goals['weight'] = {
+            'current': body_mass[-1]['value'],
+            'target2w': body_mass[-1]['value'],
+            'target4w': round(max(body_mass[-1]['value'] - 1, 70), 1),
+            'unit': 'kg', 'label': '体重',
+        }
+
+    return goals
+
 
 def main(export_dir):
     xml_path = os.path.join(export_dir, 'export.xml')
@@ -340,13 +608,41 @@ def main(export_dir):
         'below95pct': round(sum(1 for v in spo2_values if v < 95) / len(spo2_values) * 100, 1) if spo2_values else 0,
     }
 
+    # SpO2 hourly profile
+    spo2_by_hour = defaultdict(list)
+    for r in spo2_records:
+        spo2_by_hour[r['hour']].append(r['value'])
+    spo2_hourly = sorted([{
+        'hour': h,
+        'mean': round(sum(vs)/len(vs), 1),
+        'min': round(min(vs), 1),
+    } for h, vs in spo2_by_hour.items()], key=lambda x: x['hour'])
+
+    # Respiratory monthly
+    resp_monthly = defaultdict(list)
+    for r in resp_records:
+        m = r['date'][:7]
+        resp_monthly[m].append(r['value'])
+    resp_monthly_list = sorted([{
+        'month': m,
+        'mean': round(sum(vs)/len(vs), 1),
+    } for m, vs in resp_monthly.items()], key=lambda x: x['month'])
+
+    # Respiratory nightly average
+    night_resp = [r['value'] for r in resp_records if r['hour'] >= 22 or r['hour'] <= 6]
+    resp_stats = {
+        'mean': round(sum(r['value'] for r in resp_records) / len(resp_records), 1) if resp_records else 0,
+        'nightMean': round(sum(night_resp)/len(night_resp), 1) if night_resp else 0,
+    }
+
     cardio = {
         'rhr': {'daily': rhr_list, 'monthly': rhr_monthly_list, 'stats': rhr_stats},
         'hrv': {'daily': hrv_daily_list, 'monthly': hrv_monthly_list, 'stats': hrv_stats},
         'vo2max': {'records': vo2_list, 'stats': vo2_stats},
         'walkingHR': {'monthly': whr_monthly_list},
         'hrHourly': hr_hourly,
-        'spo2': {'stats': spo2_stats},
+        'spo2': {'stats': spo2_stats, 'hourly': spo2_hourly},
+        'respiratory': {'monthly': resp_monthly_list, 'stats': resp_stats},
     }
 
     with open(os.path.join(out_dir, 'cardiovascular.json'), 'w') as f:
@@ -468,11 +764,17 @@ def main(export_dir):
         'remPct': round(sum(all_rems)/len(all_rems) / (sum(all_totals)/len(all_totals)) * 100, 1) if all_rems and all_totals else 0,
     }
 
+    # Breathing disturbances and wrist temperature
+    sleep_breathing_sorted = sorted(sleep_breathing, key=lambda x: x['date'])
+    sleep_temp_sorted = sorted(sleep_temp, key=lambda x: x['date'])
+
     sleep_data = {
         'nightly': nightly_list,
         'monthly': sleep_monthly_list,
         'heatmap': heatmap_data,
         'stats': sleep_stats,
+        'breathingDisturbances': sleep_breathing_sorted,
+        'wristTemperature': sleep_temp_sorted,
     }
 
     with open(os.path.join(out_dir, 'sleep.json'), 'w') as f:
@@ -531,6 +833,9 @@ def main(export_dir):
     body_mass_sorted = sorted(body_mass, key=lambda x: x['date'])
     body_fat_sorted = sorted(body_fat, key=lambda x: x['date'])
 
+    # Exercise time daily
+    exercise_list = sorted([{'date': d, 'value': round(v)} for d, v in exercise_time_daily.items() if v > 0], key=lambda x: x['date'])
+
     activity_data = {
         'steps': {'daily': steps_list, 'monthly': steps_monthly_list, 'stats': steps_stats},
         'energy': {'daily': energy_list},
@@ -540,6 +845,7 @@ def main(export_dir):
         'activitySummary': act_list,
         'bodyMass': body_mass_sorted,
         'bodyFat': body_fat_sorted,
+        'exerciseTime': {'daily': exercise_list},
     }
 
     with open(os.path.join(out_dir, 'activity.json'), 'w') as f:
@@ -567,6 +873,35 @@ def main(export_dir):
         if r['value'] > rhr_mean + 2 * rhr_std:
             anomalies.append({'date': r['date'], 'type': 'rhr_high', 'value': r['value'], 'label': f"RHR {r['value']:.0f} bpm"})
 
+    # HRV anomalies
+    if hrv_daily_list:
+        hrv_vals = [r['value'] for r in hrv_daily_list]
+        hrv_m = sum(hrv_vals) / len(hrv_vals)
+        hrv_s = (sum((v - hrv_m) ** 2 for v in hrv_vals) / len(hrv_vals)) ** 0.5
+        for r in hrv_daily_list:
+            if r['value'] < hrv_m - 2 * hrv_s:
+                anomalies.append({'date': r['date'], 'type': 'hrv_low', 'value': r['value'], 'label': f"HRV {r['value']:.0f} ms"})
+
+    # Sleep anomalies
+    for n in nightly_list:
+        if n['total'] < 4:
+            anomalies.append({'date': n['date'], 'type': 'sleep_short', 'value': n['total'], 'label': f"Sleep {n['total']:.1f}h"})
+        if n.get('bedtime') and n['bedtime'] > 28:
+            anomalies.append({'date': n['date'], 'type': 'bedtime_late', 'value': n['bedtime'], 'label': "Bed after 4AM"})
+
+    # Step anomalies
+    if step_values:
+        step_mean = sum(step_values) / len(step_values)
+        if step_mean > 6000:
+            for s in steps_list:
+                if s['value'] < 2000:
+                    anomalies.append({'date': s['date'], 'type': 'steps_low', 'value': s['value'], 'label': f"Steps {s['value']}"})
+
+    # SpO2 anomalies
+    for r in spo2_records:
+        if r['value'] < 92:
+            anomalies.append({'date': r['date'], 'type': 'spo2_low', 'value': round(r['value'], 1), 'label': f"SpO2 {r['value']:.0f}%"})
+
     overview = {
         'user': {
             'dob': dob,
@@ -576,22 +911,30 @@ def main(export_dir):
             'currentBodyFat': body_fat_sorted[-1]['value'] if body_fat_sorted else 0,
             'latestWeightDate': body_mass_sorted[-1]['date'] if body_mass_sorted else '',
         },
-        'risks': {
-            'circadianRhythm': {'level': 'high', 'score': 85, 'label': '昼夜节律障碍'},
-            'cardioFitness': {'level': 'medium-high', 'score': 65, 'label': '心肺功能退化'},
-            'chronicStress': {'level': 'medium', 'score': 50, 'label': '过劳/慢性压力'},
-            'metabolicRisk': {'level': 'low-medium', 'score': 35, 'label': '代谢综合征前兆'},
-            'cardiovascularEvent': {'level': 'low', 'score': 15, 'label': '心血管急性事件'},
-            'sleepApnea': {'level': 'low', 'score': 10, 'label': '睡眠呼吸障碍'},
-        },
-        'goals': {
-            'bedtime': {'current': round(sum(all_beds[-30:])/len(all_beds[-30:]), 1) if len(all_beds) >= 30 else 0, 'target2w': 26.0, 'target4w': 25.0, 'unit': 'h', 'label': '入睡时间'},
-            'hrv': {'current': hrv_stats['mean'], 'target2w': 55, 'target4w': 60, 'unit': 'ms', 'label': 'HRV SDNN'},
-            'rhr': {'current': rhr_stats.get('latest', 54), 'target2w': 55, 'target4w': 55, 'unit': 'bpm', 'label': '静息心率'},
-            'steps': {'current': round(sum(step_values[-30:])/len(step_values[-30:])) if len(step_values) >= 30 else 0, 'target2w': 7000, 'target4w': 8000, 'unit': '步', 'label': '日均步数'},
-            'exerciseFreq': {'current': 1.0, 'target2w': 3, 'target4w': 4, 'unit': '次/周', 'label': '周运动次数'},
-            'weight': {'current': body_mass_sorted[-1]['value'] if body_mass_sorted else 0, 'target2w': 80, 'target4w': 79, 'unit': 'kg', 'label': '体重'},
-        },
+        'risks': compute_risks(
+            rhr_list=rhr_list,
+            hrv_records=hrv_records,
+            vo2_list=vo2_list,
+            nightly_list=nightly_list,
+            steps_daily=steps_daily,
+            body_mass=body_mass_sorted,
+            body_fat=body_fat_sorted,
+            spo2_records=spo2_records,
+            sleep_breathing=sleep_breathing,
+            workouts=workouts_sorted,
+            exercise_time_daily=exercise_time_daily,
+            all_beds=all_beds,
+            age=age,
+        ),
+        'goals': compute_goals(
+            rhr_stats=rhr_stats,
+            hrv_stats=hrv_stats,
+            steps_stats=steps_list,
+            body_mass=body_mass_sorted,
+            nightly_list=nightly_list,
+            workouts=workouts_sorted,
+            all_beds=all_beds,
+        ),
         'anomalies': anomalies,
         'dataRange': {
             'start': rhr_list[0]['date'] if rhr_list else '',
@@ -605,6 +948,12 @@ def main(export_dir):
 
     print("\nAll data files generated successfully!")
     print(f"Output: {out_dir}/")
+    print("\nNew fields summary:")
+    print(f"  respiratory: {len(resp_monthly_list)} months")
+    print(f"  spo2 hourly: {len(spo2_hourly)} hours")
+    print(f"  breathing disturbances: {len(sleep_breathing_sorted)} records")
+    print(f"  wrist temperature: {len(sleep_temp_sorted)} records")
+    print(f"  exercise time: {len(exercise_list)} days")
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:

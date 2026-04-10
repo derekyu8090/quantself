@@ -6,6 +6,9 @@
  * <RiskPanel overview={overviewData} />
  */
 
+import { fmtDateFullZh as formatDate, filterByDateRange } from '../utils/dataUtils';
+import { useDateRange } from '../contexts/DateRangeContext';
+
 // ─── risk level config ─────────────────────────────────────────────────────
 
 const RISK_COLORS = {
@@ -29,13 +32,6 @@ function getRiskEntry(level) {
 }
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
-
-function formatDate(dateStr) {
-  if (!dateStr) return '';
-  const d = new Date(dateStr);
-  if (isNaN(d)) return dateStr;
-  return d.toLocaleDateString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit' });
-}
 
 /** Convert decimal hours to HH:MM string. e.g. 27.6 → 03:36 (next day) */
 function hoursToHHMM(h) {
@@ -319,11 +315,19 @@ function AnomalyTimeline({ anomalies, t }) {
     );
   }
 
-  // Only show significant anomalies (value >= 63) and limit to most recent 15
-  const significant = anomalies.filter(a => a.value >= 63);
+  // Filter to significant anomalies by type, limit to 20 most recent
+  const significant = anomalies.filter(a => {
+    if (a.type === 'rhr_high') return a.value >= 65;
+    if (a.type === 'hrv_low') return true;
+    if (a.type === 'sleep_short') return true;
+    if (a.type === 'bedtime_late') return a.value >= 29; // after 5am only
+    if (a.type === 'spo2_low') return a.value < 88;
+    if (a.type === 'steps_low') return true;
+    return true;
+  });
   const sorted = [...significant]
     .sort((a, b) => new Date(b.date) - new Date(a.date))
-    .slice(0, 15);
+    .slice(0, 20);
 
   return (
     <div className="card" role="region" aria-label="异常事件时间线">
@@ -426,12 +430,15 @@ function RiskPanel({ overview, t }) {
     );
   }
 
+  const { startDate, endDate } = useDateRange();
+  const anomaliesFiltered = filterByDateRange(overview.anomalies, startDate, endDate);
+
   return (
     <div className="panel" role="main" aria-label="风险面板">
       <UserProfileCard user={overview.user} t={t} />
       <RiskAssessment risks={overview.risks} t={t} />
       <GoalTracking goals={overview.goals} t={t} />
-      <AnomalyTimeline anomalies={overview.anomalies} t={t} />
+      <AnomalyTimeline anomalies={anomaliesFiltered} t={t} />
     </div>
   );
 }

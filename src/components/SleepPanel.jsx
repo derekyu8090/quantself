@@ -17,7 +17,10 @@
  * bedtime is in hours where 24 = midnight, 25 = 1am, 26 = 2am, etc.
  */
 
+import { useMemo } from 'react';
 import {
+  AreaChart,
+  Area,
   BarChart,
   Bar,
   LineChart,
@@ -32,25 +35,8 @@ import {
 } from 'recharts';
 import StatCard from './StatCard';
 import { getChartTheme } from '../chartTheme';
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Convert fractional hours (24=midnight, 25=1am …) to HH:MM string */
-function formatBedtime(h) {
-  const hour = Math.floor(h) % 24;
-  const min = Math.round((h % 1) * 60);
-  return `${hour.toString().padStart(2, '0')}:${min.toString().padStart(2, '0')}`;
-}
-
-/** Shorten "2023-08" to "Aug '23" for axis labels */
-function fmtMonth(m) {
-  if (!m) return '';
-  const [y, mo] = m.split('-');
-  const names = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-  return `${names[parseInt(mo, 10) - 1]} '${y.slice(2)}`;
-}
+import { fmtMonth, formatBedtime, filterByDateRange } from '../utils/dataUtils';
+import { useDateRange } from '../contexts/DateRangeContext';
 
 // ---------------------------------------------------------------------------
 // Heatmap component
@@ -254,6 +240,7 @@ export default function SleepPanel({ data, t }) {
     );
   }
 
+  const { startDate, endDate } = useDateRange();
   const { stats, monthly = [], heatmap = [] } = data;
 
   if (!stats) {
@@ -268,12 +255,50 @@ export default function SleepPanel({ data, t }) {
     );
   }
 
+  // Filter monthly chart data by date range — stat cards always use all-time stats
+  const monthlyFiltered = filterByDateRange(monthly, startDate, endDate, 'month');
+
   // Monthly data enriched with stage %
-  const monthlyEnriched = monthly.map((m) => ({
+  const monthlyEnriched = monthlyFiltered.map((m) => ({
     ...m,
     deepPct: m.avgTotal > 0 ? parseFloat(((m.avgDeep / m.avgTotal) * 100).toFixed(1)) : 0,
     remPct: m.avgTotal > 0 ? parseFloat(((m.avgREM / m.avgTotal) * 100).toFixed(1)) : 0,
   }));
+
+  // Breathing disturbances — monthly averages
+  const bdMonthly = useMemo(() => {
+    if (!data.breathingDisturbances?.length) return [];
+    const groups = {};
+    for (const r of data.breathingDisturbances) {
+      const m = r.date.slice(0, 7);
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(r.value);
+    }
+    return Object.entries(groups).sort().map(([month, vals]) => ({
+      month,
+      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
+      max: Math.max(...vals),
+    }));
+  }, [data.breathingDisturbances]);
+
+  // Wrist temperature — monthly averages
+  const tempMonthly = useMemo(() => {
+    if (!data.wristTemperature?.length) return [];
+    const groups = {};
+    for (const r of data.wristTemperature) {
+      const m = r.date.slice(0, 7);
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(r.value);
+    }
+    return Object.entries(groups).sort().map(([month, vals]) => ({
+      month,
+      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
+    }));
+  }, [data.wristTemperature]);
+
+  // Filter by date range
+  const bdMonthlyFiltered   = filterByDateRange(bdMonthly,   startDate, endDate, 'month');
+  const tempMonthlyFiltered = filterByDateRange(tempMonthly, startDate, endDate, 'month');
 
   // For bedtime Y axis: nice tick labels
   const bedtimeYTicks = [24, 25, 26, 27, 28, 29, 30];
@@ -487,6 +512,94 @@ export default function SleepPanel({ data, t }) {
           </LineChart>
         </ResponsiveContainer>
       </div>
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Row 5 — Breathing Disturbances + Wrist Temperature side by side     */}
+      {/* ------------------------------------------------------------------ */}
+      {(bdMonthlyFiltered.length > 0 || tempMonthlyFiltered.length > 0) && (
+        <div className="two-col">
+
+          {/* Breathing Disturbances bar chart */}
+          {bdMonthlyFiltered.length > 0 && (
+            <div className="chart-card" role="region" aria-label="Breathing disturbances monthly chart">
+              <div className="chart-card-header">
+                <div>
+                  <h3 className="section-title">{t?.('sleep.breathingDist') ?? 'Breathing Disturbances'}</h3>
+                  <p className="chart-card-title">{t?.('sleep.breathingDistSub') ?? 'Monthly Average Index'}</p>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <BarChart data={bdMonthlyFiltered} barCategoryGap="30%">
+                  <CartesianGrid stroke={theme.grid.stroke} strokeDasharray="0" vertical={false} />
+                  <XAxis
+                    dataKey="month"
+                    tickFormatter={fmtMonth}
+                    {...theme.xAxis}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis {...theme.yAxis} domain={[0, 'auto']} width={36} />
+                  <Tooltip
+                    contentStyle={theme.tooltip.contentStyle}
+                    labelStyle={theme.tooltip.labelStyle}
+                  />
+                  <ReferenceLine
+                    y={5}
+                    stroke="var(--color-risk)"
+                    strokeDasharray="4 3"
+                    label={{
+                      value: t?.('sleep.clinicalThreshold') ?? 'Clinical Threshold',
+                      fill: 'var(--color-risk)',
+                      fontSize: 10,
+                      position: 'insideTopRight',
+                    }}
+                  />
+                  <Bar dataKey="mean" fill="var(--color-risk)" fillOpacity={0.75} radius={[3, 3, 0, 0]} name={t?.('sleep.breathingDist') ?? 'Breathing Disturbances'} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+          {/* Wrist Temperature line chart */}
+          {tempMonthlyFiltered.length > 0 && (
+            <div className="chart-card" role="region" aria-label="Wrist temperature monthly chart">
+              <div className="chart-card-header">
+                <div>
+                  <h3 className="section-title">{t?.('sleep.wristTemp') ?? 'Wrist Temperature'}</h3>
+                  <p className="chart-card-title">{t?.('sleep.wristTempSub') ?? 'Monthly Average'}</p>
+                </div>
+              </div>
+              <ResponsiveContainer width="100%" height={220}>
+                <LineChart data={tempMonthlyFiltered} margin={{ top: 4, right: 16, left: 0, bottom: 0 }}>
+                  <CartesianGrid stroke={theme.grid.stroke} strokeDasharray="0" vertical={false} />
+                  <XAxis
+                    dataKey="month"
+                    tickFormatter={fmtMonth}
+                    {...theme.xAxis}
+                    interval="preserveStartEnd"
+                  />
+                  <YAxis {...theme.yAxis} domain={['auto', 'auto']} width={44} unit="°C" />
+                  <Tooltip
+                    contentStyle={theme.tooltip.contentStyle}
+                    labelStyle={theme.tooltip.labelStyle}
+                    formatter={(val) => [`${val}°C`, t?.('sleep.wristTemp') ?? 'Wrist Temperature']}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="mean"
+                    stroke="var(--color-heart)"
+                    strokeWidth={2}
+                    dot={false}
+                    activeDot={theme.activeDot(theme.colors.heart)}
+                    name={t?.('sleep.wristTemp') ?? 'Wrist Temperature'}
+                    connectNulls
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+
+        </div>
+      )}
     </div>
   );
 }

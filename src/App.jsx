@@ -4,6 +4,8 @@ import SleepPanel from './components/SleepPanel'
 import ActivityPanel from './components/ActivityPanel'
 import RiskPanel from './components/RiskPanel'
 import GlossaryPanel from './components/GlossaryPanel'
+import DateRangePicker from './components/DateRangePicker'
+import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
 
@@ -68,6 +70,7 @@ function App() {
   const dataRangeLabel = dataRange ? `${dataRange.start} \u2013 ${dataRange.end}` : null
 
   return (
+    <DateRangeProvider>
     <div className="app">
       <header className="app-header" role="banner">
         <div className="app-header-inner">
@@ -97,6 +100,8 @@ function App() {
               </button>
             ))}
           </nav>
+
+          <DateRangePicker lang={lang} />
 
           <div className="header-meta">
             {/* Language toggle */}
@@ -181,6 +186,7 @@ function App() {
         )}
       </main>
     </div>
+    </DateRangeProvider>
   )
 }
 

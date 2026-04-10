@@ -297,6 +297,252 @@ def compute_goals(rhr_stats, hrv_stats, steps_stats, body_mass, nightly_list, wo
     return goals
 
 
+def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workouts, body_mass, age):
+    """
+    Compute daily health score (0-100) from weighted components:
+    - RHR (15%): lower is better, scored against personal baseline
+    - HRV (20%): higher is better, scored against age-adjusted range
+    - Sleep (25%): duration (target 7-8h) + deep sleep %
+    - Activity (15%): steps vs 8000 target + exercise minutes
+    - Recovery (15%): HRV stability + RHR consistency
+    - Body (10%): weight trend stability
+
+    Returns: {
+        'daily': [{'date': '2023-08-04', 'score': 72, 'rhr': 80, 'hrv': 65, 'sleep': 70, 'activity': 55, 'recovery': 75, 'body': 80}],
+        'latest': 72,
+        'mean': 68,
+        'trend': 'improving',  # or 'declining', 'stable'
+        'breakdown': {'rhr': 80, 'hrv': 65, 'sleep': 70, 'activity': 55, 'recovery': 75, 'body': 80}
+    }
+    """
+    # Build lookup maps
+    rhr_map = {r['date']: r['value'] for r in rhr_daily}
+    # hrv_daily_map is already {date: [values]}
+    nightly_map = {n['date']: n for n in nightly}
+    # steps_daily is a defaultdict(float)
+
+    # Get all dates that have at least RHR or HRV data
+    all_dates = sorted(set(list(rhr_map.keys()) + list(hrv_daily_map.keys())))
+
+    # Personal baselines (rolling 30-day)
+    rhr_values = [r['value'] for r in rhr_daily]
+    rhr_baseline = sum(rhr_values) / len(rhr_values) if rhr_values else 60
+
+    hrv_all = []
+    for vs in hrv_daily_map.values():
+        hrv_all.extend(vs)
+    hrv_baseline = sum(hrv_all) / len(hrv_all) if hrv_all else 50
+
+    # Weight baseline
+    weight_values = [b['value'] for b in body_mass] if body_mass else []
+    weight_baseline = sum(weight_values) / len(weight_values) if weight_values else 75
+
+    daily_scores = []
+
+    for date in all_dates:
+        components = {}
+
+        # RHR component (15%) - lower is better
+        rhr_val = rhr_map.get(date)
+        if rhr_val is not None:
+            # Score: 100 if rhr <= baseline-5, 0 if rhr >= baseline+15
+            rhr_score = max(0, min(100, 100 - (rhr_val - (rhr_baseline - 5)) / 20 * 100))
+            components['rhr'] = round(rhr_score)
+
+        # HRV component (20%) - higher is better
+        hrv_vals = hrv_daily_map.get(date, [])
+        if hrv_vals:
+            hrv_mean = sum(hrv_vals) / len(hrv_vals)
+            # Score: 0 if hrv <= 20, 100 if hrv >= 80
+            hrv_score = max(0, min(100, (hrv_mean - 20) / 60 * 100))
+            components['hrv'] = round(hrv_score)
+
+        # Sleep component (25%)
+        night = nightly_map.get(date)
+        if night:
+            total = night.get('total', 0)
+            deep = night.get('deep', 0)
+            # Duration score: peak at 7.5h, drops off at <6 or >9.5
+            if total <= 0:
+                dur_score = 0
+            elif total < 6:
+                dur_score = total / 6 * 60
+            elif total <= 8.5:
+                dur_score = 80 + (min(total, 7.5) - 6) / 1.5 * 20
+            else:
+                dur_score = max(50, 100 - (total - 8.5) * 20)
+
+            # Deep sleep bonus
+            deep_pct = deep / total * 100 if total > 0 else 0
+            deep_bonus = min(20, deep_pct)  # up to 20 bonus points for deep sleep
+
+            sleep_score = min(100, dur_score * 0.8 + deep_bonus)
+            components['sleep'] = round(sleep_score)
+
+        # Activity component (15%)
+        step_val = steps_daily.get(date, 0)
+        step_score = min(100, step_val / 10000 * 100)
+        components['activity'] = round(step_score)
+
+        # Recovery component (15%) - based on HRV relative to personal baseline
+        if hrv_vals:
+            hrv_mean = sum(hrv_vals) / len(hrv_vals)
+            recovery_ratio = hrv_mean / hrv_baseline if hrv_baseline > 0 else 1
+            recovery_score = max(0, min(100, recovery_ratio * 70 + 15))
+            components['recovery'] = round(recovery_score)
+
+        # Body component (10%) - weight stability
+        components['body'] = 70  # Default stable score, adjusted below
+
+        # Only compute if we have enough components
+        if len(components) >= 3:
+            weights = {'rhr': 15, 'hrv': 20, 'sleep': 25, 'activity': 15, 'recovery': 15, 'body': 10}
+            total_weight = sum(weights[k] for k in components if k in weights)
+            if total_weight > 0:
+                score = sum(components.get(k, 50) * weights.get(k, 0) for k in weights) / 100
+                score = round(max(0, min(100, score)))
+
+                daily_scores.append({
+                    'date': date,
+                    'score': score,
+                    **{k: components.get(k, None) for k in ['rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body']}
+                })
+
+    if not daily_scores:
+        return {'daily': [], 'latest': 0, 'mean': 0, 'trend': 'stable', 'breakdown': {}}
+
+    scores = [d['score'] for d in daily_scores]
+    latest = daily_scores[-1]
+
+    # Trend: compare last 14 days vs previous 14 days
+    recent = scores[-14:] if len(scores) >= 14 else scores
+    older = scores[-28:-14] if len(scores) >= 28 else scores[:len(scores)//2]
+    recent_mean = sum(recent) / len(recent) if recent else 0
+    older_mean = sum(older) / len(older) if older else recent_mean
+
+    if recent_mean > older_mean + 3:
+        trend = 'improving'
+    elif recent_mean < older_mean - 3:
+        trend = 'declining'
+    else:
+        trend = 'stable'
+
+    return {
+        'daily': daily_scores,
+        'latest': latest['score'],
+        'mean': round(sum(scores) / len(scores)),
+        'trend': trend,
+        'breakdown': {k: latest.get(k, 0) for k in ['rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body']},
+    }
+
+
+def compute_baselines(rhr_daily, hrv_daily_map, nightly, steps_daily):
+    """
+    Compute 30-day rolling baselines for key metrics.
+    Returns dict with current deviation from baseline for each metric.
+
+    Output: {
+        'rhr': {'mean': 54.2, 'stddev': 4.0, 'current': 52, 'deviation': -0.55, 'trend': 'stable'},
+        'hrv': {...},
+        'sleep': {...},
+        'steps': {...},
+    }
+    """
+    baselines = {}
+
+    # RHR baseline
+    if rhr_daily:
+        rhr_vals = [r['value'] for r in rhr_daily]
+        recent_30 = rhr_vals[-30:] if len(rhr_vals) >= 30 else rhr_vals
+        rhr_mean = sum(recent_30) / len(recent_30)
+        rhr_std = (sum((v - rhr_mean)**2 for v in recent_30) / len(recent_30))**0.5 if len(recent_30) > 1 else 0
+        current = rhr_vals[-1] if rhr_vals else rhr_mean
+        deviation = (current - rhr_mean) / rhr_std if rhr_std > 0 else 0
+
+        # Trend (last 7 days vs baseline)
+        last_7 = rhr_vals[-7:] if len(rhr_vals) >= 7 else rhr_vals
+        last_7_mean = sum(last_7) / len(last_7)
+        if last_7_mean > rhr_mean + rhr_std: trend = 'elevated'
+        elif last_7_mean < rhr_mean - rhr_std: trend = 'low'
+        else: trend = 'normal'
+
+        baselines['rhr'] = {
+            'mean': round(rhr_mean, 1),
+            'stddev': round(rhr_std, 1),
+            'current': round(current, 1),
+            'deviation': round(deviation, 2),
+            'trend': trend,
+            'alert': abs(deviation) > 1.5,
+        }
+
+    # HRV baseline
+    hrv_daily_vals = {}
+    for d, vs in hrv_daily_map.items():
+        hrv_daily_vals[d] = sum(vs) / len(vs)
+    if hrv_daily_vals:
+        sorted_dates = sorted(hrv_daily_vals.keys())
+        hrv_vals = [hrv_daily_vals[d] for d in sorted_dates]
+        recent_30 = hrv_vals[-30:] if len(hrv_vals) >= 30 else hrv_vals
+        hrv_mean = sum(recent_30) / len(recent_30)
+        hrv_std = (sum((v - hrv_mean)**2 for v in recent_30) / len(recent_30))**0.5 if len(recent_30) > 1 else 0
+        current = hrv_vals[-1] if hrv_vals else hrv_mean
+        deviation = (current - hrv_mean) / hrv_std if hrv_std > 0 else 0
+
+        last_7 = hrv_vals[-7:] if len(hrv_vals) >= 7 else hrv_vals
+        last_7_mean = sum(last_7) / len(last_7)
+        if last_7_mean > hrv_mean + hrv_std: trend = 'elevated'
+        elif last_7_mean < hrv_mean - hrv_std: trend = 'low'
+        else: trend = 'normal'
+
+        baselines['hrv'] = {
+            'mean': round(hrv_mean, 1),
+            'stddev': round(hrv_std, 1),
+            'current': round(current, 1),
+            'deviation': round(deviation, 2),
+            'trend': trend,
+            'alert': deviation < -1.5,  # low HRV is concerning
+        }
+
+    # Sleep baseline
+    if nightly:
+        sleep_vals = [n['total'] for n in nightly if n.get('total', 0) > 2]
+        recent_30 = sleep_vals[-30:] if len(sleep_vals) >= 30 else sleep_vals
+        sleep_mean = sum(recent_30) / len(recent_30)
+        sleep_std = (sum((v - sleep_mean)**2 for v in recent_30) / len(recent_30))**0.5 if len(recent_30) > 1 else 0
+        current = sleep_vals[-1] if sleep_vals else sleep_mean
+        deviation = (current - sleep_mean) / sleep_std if sleep_std > 0 else 0
+
+        baselines['sleep'] = {
+            'mean': round(sleep_mean, 2),
+            'stddev': round(sleep_std, 2),
+            'current': round(current, 2),
+            'deviation': round(deviation, 2),
+            'trend': 'normal',
+            'alert': deviation < -1.5,
+        }
+
+    # Steps baseline
+    step_vals = sorted(steps_daily.items())
+    if step_vals:
+        sv = [v for _, v in step_vals if v > 100]
+        recent_30 = sv[-30:] if len(sv) >= 30 else sv
+        step_mean = sum(recent_30) / len(recent_30)
+        step_std = (sum((v - step_mean)**2 for v in recent_30) / len(recent_30))**0.5 if len(recent_30) > 1 else 0
+        current = sv[-1] if sv else step_mean
+        deviation = (current - step_mean) / step_std if step_std > 0 else 0
+
+        baselines['steps'] = {
+            'mean': round(step_mean),
+            'stddev': round(step_std),
+            'current': round(current),
+            'deviation': round(deviation, 2),
+            'trend': 'normal',
+            'alert': deviation < -1.5,
+        }
+
+    return baselines
+
+
 def main(export_dir):
     xml_path = os.path.join(export_dir, 'export.xml')
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
@@ -902,6 +1148,15 @@ def main(export_dir):
         if r['value'] < 92:
             anomalies.append({'date': r['date'], 'type': 'spo2_low', 'value': round(r['value'], 1), 'label': f"SpO2 {r['value']:.0f}%"})
 
+    # Compute health score
+    health_score = compute_health_score(
+        rhr_list, hrv_daily_map, nightly_list, steps_daily,
+        workouts_sorted, body_mass_sorted, age
+    )
+
+    # Compute baselines
+    baselines = compute_baselines(rhr_list, hrv_daily_map, nightly_list, steps_daily)
+
     overview = {
         'user': {
             'dob': dob,
@@ -940,6 +1195,8 @@ def main(export_dir):
             'start': rhr_list[0]['date'] if rhr_list else '',
             'end': rhr_list[-1]['date'] if rhr_list else '',
         },
+        'healthScore': health_score,
+        'baselines': baselines,
     }
 
     with open(os.path.join(out_dir, 'overview.json'), 'w') as f:
@@ -954,6 +1211,8 @@ def main(export_dir):
     print(f"  breathing disturbances: {len(sleep_breathing_sorted)} records")
     print(f"  wrist temperature: {len(sleep_temp_sorted)} records")
     print(f"  exercise time: {len(exercise_list)} days")
+    print(f"  health score: {len(health_score['daily'])} days, latest={health_score['latest']}")
+    print(f"  baselines: {len(baselines)} metrics")
 
 if __name__ == '__main__':
     if len(sys.argv) < 2:

@@ -33,6 +33,7 @@ import {
   Legend,
 } from 'recharts';
 import StatCard from './StatCard';
+import ExerciseRecoveryChart from './ExerciseRecoveryChart';
 import { getChartTheme } from '../chartTheme';
 import { fmtMonth, fmtDate, fmtHour, filterByDateRange } from '../utils/dataUtils';
 import { useDateRange } from '../contexts/DateRangeContext';
@@ -347,7 +348,7 @@ function WalkingHRChart({ monthly }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-function CardiovascularPanel({ data, overview, t }) {
+function CardiovascularPanel({ data, overview, workouts, sleepNightly, t }) {
   if (!data) {
     return (
       <div className="card" style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '48px' }}>
@@ -566,6 +567,15 @@ function CardiovascularPanel({ data, overview, t }) {
           </ResponsiveContainer>
         </div>
       )}
+
+      {/* ── Row 8: Exercise-Recovery Correlation ──────────────────────── */}
+      <ExerciseRecoveryChart
+        workouts={workouts}
+        hrvDaily={data.hrv?.daily}
+        rhrDaily={data.rhr?.daily}
+        sleepNightly={sleepNightly}
+        t={t}
+      />
 
     </div>
   );

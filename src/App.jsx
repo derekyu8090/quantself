@@ -4,13 +4,16 @@ import SleepPanel from './components/SleepPanel'
 import ActivityPanel from './components/ActivityPanel'
 import RiskPanel from './components/RiskPanel'
 import GlossaryPanel from './components/GlossaryPanel'
+import ComparisonView from './components/ComparisonView'
 import DateRangePicker from './components/DateRangePicker'
+import HealthScoreCard from './components/HealthScoreCard'
+import BaselineAlerts from './components/BaselineAlerts'
 import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
 
-const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'glossary']
-const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', glossary: '?' }
+const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'compare', 'glossary']
+const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', compare: '⇔', glossary: '?' }
 
 const DATA_URLS = {
   cardiovascular: '/data/cardiovascular.json',
@@ -146,12 +149,30 @@ function App() {
           </div>
         )}
 
+        {!loading && !error && data.overview && (
+          <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
+            <div style={{ flex: '1 1 340px' }}>
+              <HealthScoreCard data={data.overview.healthScore} t={t} />
+            </div>
+            <div style={{ flex: '1 1 340px' }}>
+              <BaselineAlerts baselines={data.overview.baselines} t={t} />
+            </div>
+          </div>
+        )}
+
         {!loading && !error && (
           <>
             <div id="panel-cardiovascular" role="tabpanel" aria-labelledby="tab-cardiovascular"
                  hidden={activeTab !== 'cardiovascular'}>
               {activeTab === 'cardiovascular' && (
-                <CardiovascularPanel key={theme} data={data.cardiovascular} overview={data.overview} t={t} />
+                <CardiovascularPanel
+                  key={theme}
+                  data={data.cardiovascular}
+                  overview={data.overview}
+                  workouts={data.activity?.workouts}
+                  sleepNightly={data.sleep?.nightly}
+                  t={t}
+                />
               )}
             </div>
 
@@ -173,6 +194,19 @@ function App() {
                  hidden={activeTab !== 'risk'}>
               {activeTab === 'risk' && (
                 <RiskPanel key={theme} overview={data.overview} t={t} />
+              )}
+            </div>
+
+            <div id="panel-compare" role="tabpanel" aria-labelledby="tab-compare"
+                 hidden={activeTab !== 'compare'}>
+              {activeTab === 'compare' && (
+                <ComparisonView
+                  key={theme}
+                  cardiovascular={data.cardiovascular}
+                  sleep={data.sleep}
+                  activity={data.activity}
+                  t={t}
+                />
               )}
             </div>
 

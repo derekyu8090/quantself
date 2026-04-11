@@ -11,6 +11,7 @@ import LongevityScoreCard from './components/LongevityScoreCard'
 import BaselineAlerts from './components/BaselineAlerts'
 import ECGPanel from './components/ECGPanel'
 import CorrelationPanel from './components/CorrelationPanel'
+import WeeklyReport from './components/WeeklyReport'
 import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
@@ -183,6 +184,10 @@ function App() {
               <BaselineAlerts baselines={data.overview.baselines} t={t} />
             </div>
           </div>
+        )}
+
+        {!loading && !error && data.overview?.weeklyReport && (
+          <WeeklyReport data={data.overview.weeklyReport} t={t} />
         )}
 
         {!loading && !error && (

@@ -44,7 +44,7 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
                   body_mass, body_fat, spo2_records, sleep_breathing,
                   workouts, exercise_time_daily, all_beds, age,
                   daylight_daily=None, headphone_exposure_daily=None,
-                  walking_asymmetry_daily=None):
+                  walking_asymmetry_daily=None, arboleaf_data=None):
     """Compute 8 risk dimensions from actual health data. Returns dict."""
 
     risks = {}
@@ -169,6 +169,24 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
         weekly_freq = len(workouts) / (days_span / 7)
         if weekly_freq < 1: met_score += 15
         elif weekly_freq < 2: met_score += 5
+
+    # Enhanced metabolic risk with Arboleaf data
+    if arboleaf_data:
+        latest_arb = arboleaf_data[-1] if arboleaf_data else {}
+        visceral = latest_arb.get('visceralFat')
+        skeletal = latest_arb.get('skeletalMuscle')
+
+        if visceral is not None:
+            # Visceral fat: <9 = normal, 10-14 = high, >=15 = very high
+            if visceral >= 15: met_score += 25
+            elif visceral >= 10: met_score += 15
+            elif visceral >= 7: met_score += 5
+
+        if skeletal is not None:
+            # Skeletal muscle %: men target >50%
+            if skeletal < 40: met_score += 15
+            elif skeletal < 45: met_score += 10
+            elif skeletal >= 55: met_score = max(0, met_score - 5)  # good muscle = protective
 
     met_score = min(100, met_score)
     risks['metabolicRisk'] = {
@@ -347,7 +365,7 @@ def compute_goals(rhr_stats, hrv_stats, steps_stats, body_mass, nightly_list, wo
     return goals
 
 
-def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workouts, body_mass, age):
+def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workouts, body_mass, age, daylight_daily=None):
     """
     Compute daily health score (0-100) from weighted components:
     - RHR (15%): lower is better, scored against personal baseline
@@ -444,9 +462,21 @@ def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workout
         # Body component (10%) - weight stability
         components['body'] = 70  # Default stable score, adjusted below
 
+        # Daylight component (new, 8% weight)
+        if daylight_daily is not None:
+            dl_val = daylight_daily.get(date, 0)
+            if dl_val > 0:
+                # Score: 0-10min = 20, 10-20 = 40, 20-40 = 65, 40-60 = 80, >60 = 95
+                if dl_val >= 60: dl_score = 95
+                elif dl_val >= 40: dl_score = 75 + (dl_val - 40) / 20 * 20
+                elif dl_val >= 20: dl_score = 55 + (dl_val - 20) / 20 * 20
+                elif dl_val >= 10: dl_score = 30 + (dl_val - 10) / 10 * 25
+                else: dl_score = max(10, dl_val / 10 * 30)
+                components['daylight'] = round(dl_score)
+
         # Only compute if we have enough components
         if len(components) >= 3:
-            weights = {'rhr': 15, 'hrv': 20, 'sleep': 25, 'activity': 15, 'recovery': 15, 'body': 10}
+            weights = {'rhr': 13, 'hrv': 18, 'sleep': 23, 'activity': 13, 'recovery': 13, 'body': 10, 'daylight': 10}
             total_weight = sum(weights[k] for k in components if k in weights)
             if total_weight > 0:
                 score = sum(components.get(k, 50) * weights.get(k, 0) for k in weights) / 100
@@ -455,7 +485,7 @@ def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workout
                 daily_scores.append({
                     'date': date,
                     'score': score,
-                    **{k: components.get(k, None) for k in ['rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body']}
+                    **{k: components.get(k, None) for k in ['rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body', 'daylight']}
                 })
 
     if not daily_scores:
@@ -482,7 +512,7 @@ def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workout
         'latest': latest['score'],
         'mean': round(sum(scores) / len(scores)),
         'trend': trend,
-        'breakdown': {k: latest.get(k, 0) for k in ['rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body']},
+        'breakdown': {k: latest.get(k, 0) for k in ['rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body', 'daylight']},
     }
 
 
@@ -1124,6 +1154,163 @@ def compute_correlations(rhr_daily, hrv_daily_map, nightly_list, steps_daily,
         'labels': labels,
         'labels_zh': labels_zh,
     }
+
+
+def generate_weekly_report(health_score, longevity_score, risks, baselines, correlations,
+                           rhr_list, hrv_daily_map, nightly_list, steps_daily,
+                           daylight_daily, workouts, arboleaf_data):
+    """Generate a weekly health summary using Claude API."""
+    import os
+
+    # Load API key from .env file
+    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
+    if not api_key:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        if os.path.exists(env_path):
+            with open(env_path) as f:
+                for line in f:
+                    if line.strip().startswith('ANTHROPIC_API_KEY='):
+                        api_key = line.strip().split('=', 1)[1]
+
+    if not api_key:
+        return {'report': None, 'error': 'No ANTHROPIC_API_KEY found'}
+
+    # Build context from last 7 days
+    from datetime import datetime, timedelta
+    today = datetime.now().strftime('%Y-%m-%d')
+    week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
+    two_weeks_ago = (datetime.now() - timedelta(days=14)).strftime('%Y-%m-%d')
+
+    # Last 7 days health scores
+    recent_scores = [d for d in health_score.get('daily', []) if d['date'] >= week_ago and d['date'] < today]
+    prev_scores = [d for d in health_score.get('daily', []) if d['date'] >= two_weeks_ago and d['date'] < week_ago]
+
+    # Last 7 days key metrics
+    recent_rhr = [r for r in rhr_list if r['date'] >= week_ago and r['date'] < today]
+
+    recent_hrv = []
+    for d, vs in hrv_daily_map.items():
+        if d >= week_ago and d < today and vs:
+            recent_hrv.append({'date': d, 'value': round(sum(vs)/len(vs), 1)})
+
+    recent_sleep = [n for n in nightly_list if n['date'] >= week_ago and n['date'] < today]
+
+    recent_steps = {d: v for d, v in steps_daily.items() if d >= week_ago and d < today}
+
+    recent_daylight = {d: v for d, v in daylight_daily.items() if d >= week_ago and d < today}
+
+    recent_workouts = [w for w in workouts if w.get('date', '') >= week_ago and w.get('date', '') < today]
+
+    # Build stats summary
+    def avg(lst): return round(sum(lst)/len(lst), 1) if lst else 0
+
+    summary = {
+        'period': f'{week_ago} to {today}',
+        'healthScore': {
+            'thisWeek': avg([s['score'] for s in recent_scores]),
+            'lastWeek': avg([s['score'] for s in prev_scores]),
+        },
+        'longevityScore': longevity_score.get('score', 0),
+        'rhr': {
+            'thisWeek': avg([r['value'] for r in recent_rhr]),
+            'baseline': baselines.get('rhr', {}).get('mean', 0),
+        },
+        'hrv': {
+            'thisWeek': avg([r['value'] for r in recent_hrv]),
+            'baseline': baselines.get('hrv', {}).get('mean', 0),
+        },
+        'sleep': {
+            'avgDuration': avg([n['total'] for n in recent_sleep]),
+            'avgBedtime': avg([n.get('bedtime', 0) for n in recent_sleep if n.get('bedtime')]),
+        },
+        'steps': {
+            'avgDaily': avg(list(recent_steps.values())) if recent_steps else 0,
+        },
+        'daylight': {
+            'avgMinutes': avg(list(recent_daylight.values())) if recent_daylight else 0,
+        },
+        'workouts': len(recent_workouts),
+        'workoutTypes': [w.get('type', '') for w in recent_workouts],
+        'topRisks': [(v['label'], v['score'], v['level']) for k, v in sorted(risks.items(), key=lambda x: -x[1]['score'])[:3]],
+        'topCorrelation': correlations.get('pairs', [{}])[0] if correlations.get('pairs') else {},
+    }
+
+    # Build prompt
+    prompt = f"""You are a health data analyst. Generate a concise weekly health report in both English and Chinese.
+
+Data for the week {summary['period']}:
+
+- Daily Health Score: this week avg {summary['healthScore']['thisWeek']}, last week avg {summary['healthScore']['lastWeek']}
+- Longevity Score: {summary['longevityScore']}/100
+- Resting Heart Rate: {summary['rhr']['thisWeek']} bpm (baseline: {summary['rhr']['baseline']})
+- HRV (SDNN): {summary['hrv']['thisWeek']} ms (baseline: {summary['hrv']['baseline']})
+- Sleep: avg {summary['sleep']['avgDuration']:.1f}h, avg bedtime ~{summary['sleep']['avgBedtime']:.1f}h (24=midnight, 27=3am)
+- Steps: avg {summary['steps']['avgDaily']:.0f}/day
+- Daylight: avg {summary['daylight']['avgMinutes']:.0f} min/day
+- Workouts: {summary['workouts']} sessions ({', '.join(summary['workoutTypes']) if summary['workoutTypes'] else 'none'})
+- Top risks: {', '.join(f'{label} ({score})' for label, score, level in summary['topRisks'])}
+
+Write a 150-word report with these sections:
+1. **This Week** — one sentence summary (improving/declining/stable, key highlight)
+2. **Key Changes** — 2-3 bullet points on what changed vs baseline or last week
+3. **Action Item** — one specific, actionable recommendation for next week
+
+Output format:
+---EN---
+(English report)
+---ZH---
+(Chinese report)"""
+
+    # Call Claude API
+    try:
+        import urllib.request
+        import json as json_mod
+
+        req = urllib.request.Request(
+            'https://api.anthropic.com/v1/messages',
+            data=json_mod.dumps({
+                'model': 'claude-sonnet-4-20250514',
+                'max_tokens': 1024,
+                'messages': [{'role': 'user', 'content': prompt}],
+            }).encode(),
+            headers={
+                'Content-Type': 'application/json',
+                'x-api-key': api_key,
+                'anthropic-version': '2023-06-01',
+            },
+        )
+
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json_mod.loads(resp.read().decode())
+
+        text = result['content'][0]['text']
+
+        # Parse EN and ZH sections
+        en_report = ''
+        zh_report = ''
+        if '---EN---' in text and '---ZH---' in text:
+            parts = text.split('---ZH---')
+            en_report = parts[0].replace('---EN---', '').strip()
+            zh_report = parts[1].strip()
+        else:
+            en_report = text
+            zh_report = text
+
+        return {
+            'en': en_report,
+            'zh': zh_report,
+            'generatedAt': datetime.now().strftime('%Y-%m-%d %H:%M'),
+            'period': summary['period'],
+            'error': None,
+        }
+
+    except Exception as e:
+        return {
+            'en': None,
+            'zh': None,
+            'error': str(e),
+            'period': summary['period'],
+        }
 
 
 def main(export_dir, arboleaf_path=None):
@@ -1913,7 +2100,8 @@ def main(export_dir, arboleaf_path=None):
     # Compute health score
     health_score = compute_health_score(
         rhr_list, hrv_daily_map, nightly_list, steps_daily,
-        workouts_sorted, body_mass_sorted, age
+        workouts_sorted, body_mass_sorted, age,
+        daylight_daily=daylight_daily,
     )
 
     # Compute longevity score
@@ -1934,6 +2122,38 @@ def main(export_dir, arboleaf_path=None):
         workouts_sorted, daylight_daily
     )
 
+    # Compute risks
+    risks = compute_risks(
+        rhr_list=rhr_list,
+        hrv_records=hrv_records,
+        vo2_list=vo2_list,
+        nightly_list=nightly_list,
+        steps_daily=steps_daily,
+        body_mass=body_mass_sorted,
+        body_fat=body_fat_sorted,
+        spo2_records=spo2_records,
+        sleep_breathing=sleep_breathing,
+        workouts=workouts_sorted,
+        exercise_time_daily=exercise_time_daily,
+        all_beds=all_beds,
+        age=age,
+        daylight_daily=daylight_daily,
+        headphone_exposure_daily=headphone_exposure_daily,
+        walking_asymmetry_daily=walking_asymmetry_daily,
+        arboleaf_data=arboleaf_data,
+    )
+
+    print("Generating AI weekly report...")
+    weekly_report = generate_weekly_report(
+        health_score, longevity_score, risks, baselines, correlations,
+        rhr_list, hrv_daily_map, nightly_list, steps_daily,
+        daylight_daily, workouts_sorted, arboleaf_data
+    )
+    if weekly_report.get('error'):
+        print(f"  Weekly report: {weekly_report['error']}")
+    else:
+        print(f"  Weekly report generated ({weekly_report['generatedAt']})")
+
     overview = {
         'user': {
             'dob': dob,
@@ -1943,24 +2163,7 @@ def main(export_dir, arboleaf_path=None):
             'currentBodyFat': body_fat_sorted[-1]['value'] if body_fat_sorted else 0,
             'latestWeightDate': body_mass_sorted[-1]['date'] if body_mass_sorted else '',
         },
-        'risks': compute_risks(
-            rhr_list=rhr_list,
-            hrv_records=hrv_records,
-            vo2_list=vo2_list,
-            nightly_list=nightly_list,
-            steps_daily=steps_daily,
-            body_mass=body_mass_sorted,
-            body_fat=body_fat_sorted,
-            spo2_records=spo2_records,
-            sleep_breathing=sleep_breathing,
-            workouts=workouts_sorted,
-            exercise_time_daily=exercise_time_daily,
-            all_beds=all_beds,
-            age=age,
-            daylight_daily=daylight_daily,
-            headphone_exposure_daily=headphone_exposure_daily,
-            walking_asymmetry_daily=walking_asymmetry_daily,
-        ),
+        'risks': risks,
         'goals': compute_goals(
             rhr_stats=rhr_stats,
             hrv_stats=hrv_stats,
@@ -1979,6 +2182,7 @@ def main(export_dir, arboleaf_path=None):
         'longevityScore': longevity_score,
         'baselines': baselines,
         'correlations': correlations,
+        'weeklyReport': weekly_report,
     }
 
     with open(os.path.join(out_dir, 'overview.json'), 'w') as f:
@@ -2045,6 +2249,7 @@ def main(export_dir, arboleaf_path=None):
     print(f"  walking metrics: speed {len(walking_speed_daily)}, step length {len(walking_step_length_daily)}, asymmetry {len(walking_asymmetry_daily)} days")
     print(f"  headphone exposure: {len(headphone_monthly_list)} months")
     print(f"  correlations: {len(correlations['pairs'])} significant pairs")
+    print(f"  weekly report: {'generated' if weekly_report.get('en') else weekly_report.get('error', 'skipped')}")
 
 if __name__ == '__main__':
     import argparse

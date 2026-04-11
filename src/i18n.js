@@ -223,6 +223,12 @@ const translations = {
       low: 'Low',
       normal: 'Normal',
     },
+    weeklyReport: {
+      title: 'Weekly Health Report',
+      expand: 'Expand',
+      collapse: 'Collapse',
+      generated: 'Generated',
+    },
     risk: {
       profile: 'Profile',
       riskAssessment: 'Risk Assessment',
@@ -525,6 +531,12 @@ const translations = {
       elevated: '偏高',
       low: '偏低',
       normal: '正常',
+    },
+    weeklyReport: {
+      title: 'AI 周报',
+      expand: '展开',
+      collapse: '收起',
+      generated: '生成时间',
     },
     risk: {
       profile: '个人档案',

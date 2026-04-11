@@ -37,7 +37,7 @@ iPhone 健康导出 --> Python 管线 --> JSON 数据 --> React 仪表盘 / Taur
 | **活动** | 步数、锻炼时长、站立时长、运动记录 | 游泳心率区间分析、GitHub 风格日历热力图 |
 | **风险与目标** | 6维风险评估、目标追踪 | 数据驱动的动态风险评分、异常事件时间线 |
 | **对比** | 任意两个时间段对比 | 并排 StatCards 含变化值、叠加趋势图 |
-| **心电图** | 24份心电图记录 | 波形可视化 + Apple 分类标签 |
+| **心电图** | 心电图记录 | 波形可视化 + Apple 分类标签 |
 | **指标说明** | 8项核心健康指标详解 | 是什么、正常范围、为什么重要、如何改善 |
 | **运动恢复** | 运动 vs 次日 HRV/RHR | 时长-恢复散点图、恢复时间线 |
 
@@ -84,7 +84,7 @@ iPhone 健康导出 --> Python 管线 --> JSON 数据 --> React 仪表盘 / Taur
                              |
                     +--------v---------+
                     |  process_data.py |  <-- 流式 XML 解析器
-                    |  (Python, 无依赖) |     处理 300万+ 记录
+                    |  (Python, 无依赖) |     处理百万级记录
                     +--------+---------+
                              |
               +--------------+--------------+
@@ -116,7 +116,7 @@ iPhone 健康导出 --> Python 管线 --> JSON 数据 --> React 仪表盘 / Taur
 ```
 Apple Health XML
   |
-  |-- HeartRate (100万+ 记录)        --> cardiovascular.json
+  |-- HeartRate                       --> cardiovascular.json
   |-- RestingHeartRate                   |-- rhr (每日 + 月度)
   |-- HeartRateVariabilitySDNN           |-- hrv (每日 + 夜间/日间)
   |-- VO2Max                             |-- vo2max (记录 + 统计)
@@ -125,7 +125,7 @@ Apple Health XML
   |-- WalkingHeartRateAverage            |-- walkingHR (月度)
   |                                      |-- hrHourly (24小时分布)
   |
-  |-- SleepAnalysis (2.9万 记录)     --> sleep.json
+  |-- SleepAnalysis                   --> sleep.json
   |     核心 / 深睡 / REM / 清醒         |-- nightly (每晚分解)
   |                                      |-- monthly (月均)
   |                                      |-- heatmap (入睡分布)
@@ -138,7 +138,7 @@ Apple Health XML
   |-- BodyMass / BodyFatPercentage       |-- bodyMass / bodyFat
   |-- AppleExerciseTime                  |-- exerciseTime
   |
-  |-- Electrocardiograms (24份 CSV)  --> ecg.json
+  |-- Electrocardiograms (CSV)        --> ecg.json
   |     512Hz Lead I 记录                |-- 降采样波形
   |
   +-- 计算字段                       --> overview.json

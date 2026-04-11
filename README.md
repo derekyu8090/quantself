@@ -37,7 +37,7 @@ iPhone Health Export --> Python Pipeline --> JSON Data --> React Dashboard / Tau
 | **Activity** | Steps, Exercise time, Stand hours, Workouts | Swimming HR zone analysis, GitHub-style calendar heatmap |
 | **Risk & Goals** | 6-dimension risk assessment, Goal tracking | Dynamic risk scores computed from actual data, anomaly timeline |
 | **Compare** | Period comparison (any two time ranges) | Side-by-side StatCards with delta, overlaid trend charts |
-| **ECG** | 24 electrocardiogram recordings | Waveform visualization with Apple classification badges |
+| **ECG** | Electrocardiogram recordings | Waveform visualization with Apple classification badges |
 | **Glossary** | 8 core health metrics explained | What it is, normal range, why it matters, how to improve |
 | **Exercise Recovery** | Workout vs next-day HRV/RHR | Duration-vs-recovery scatter plot, recovery timeline |
 
@@ -84,7 +84,7 @@ iPhone Health Export --> Python Pipeline --> JSON Data --> React Dashboard / Tau
                              |
                     +--------v---------+
                     |  process_data.py |  <-- Streaming XML parser
-                    |  (Python, no deps)|     Handles 3M+ records
+                    |  (Python, no deps)|     Handles millions of records
                     +--------+---------+
                              |
               +--------------+--------------+
@@ -116,7 +116,7 @@ iPhone Health Export --> Python Pipeline --> JSON Data --> React Dashboard / Tau
 ```
 Apple Health XML
   |
-  |-- HeartRate (1M+ records)        --> cardiovascular.json
+  |-- HeartRate                       --> cardiovascular.json
   |-- RestingHeartRate                   |-- rhr (daily + monthly)
   |-- HeartRateVariabilitySDNN           |-- hrv (daily + night/day split)
   |-- VO2Max                             |-- vo2max (records + stats)
@@ -125,7 +125,7 @@ Apple Health XML
   |-- WalkingHeartRateAverage            |-- walkingHR (monthly)
   |                                      |-- hrHourly (24h profile)
   |
-  |-- SleepAnalysis (29K records)    --> sleep.json
+  |-- SleepAnalysis                   --> sleep.json
   |     Core / Deep / REM / Awake        |-- nightly (per-night breakdown)
   |                                      |-- monthly (averages)
   |                                      |-- heatmap (bedtime distribution)
@@ -138,7 +138,7 @@ Apple Health XML
   |-- BodyMass / BodyFatPercentage       |-- bodyMass / bodyFat
   |-- AppleExerciseTime                  |-- exerciseTime
   |
-  |-- Electrocardiograms (24 CSVs)   --> ecg.json
+  |-- Electrocardiograms (CSVs)       --> ecg.json
   |     512Hz Lead I recordings          |-- downsampled waveforms
   |
   +-- Computed fields                --> overview.json

@@ -15,7 +15,13 @@ const translations = {
       risk: 'Risk & Goals',
       compare: 'Compare',
       ecg: 'ECG',
+      correlation: 'Insights',
       glossary: 'Glossary',
+    },
+    correlation: {
+      topCorrelations: 'Strongest Correlations',
+      matrix: 'Correlation Matrix',
+      noData: 'Not enough data to compute correlations',
     },
     ecg: {
       noData: 'No ECG recordings available',
@@ -153,6 +159,8 @@ const translations = {
       bodyCompLatest: 'Latest Measurement',
       flightsClimbed: 'Flights Climbed',
       basalMetabolic: 'Basal Metabolic Rate',
+      walkingSteadiness: 'Walking Steadiness',
+      sixMinWalk: 'Six Minute Walk Test',
       arboleafLabels: {
         weight: 'Weight',
         bodyFat: 'Body Fat',
@@ -310,7 +318,13 @@ const translations = {
       risk: '风险与目标',
       compare: '对比',
       ecg: '心电图',
+      correlation: '洞察',
       glossary: '指标说明',
+    },
+    correlation: {
+      topCorrelations: '最强相关性',
+      matrix: '相关性矩阵',
+      noData: '数据不足以计算相关性',
     },
     ecg: {
       noData: '暂无心电图记录',
@@ -448,6 +462,8 @@ const translations = {
       bodyCompLatest: '最新测量',
       flightsClimbed: '楼层攀爬',
       basalMetabolic: '基础代谢率',
+      walkingSteadiness: '步行稳定性',
+      sixMinWalk: '六分钟步行测试',
       arboleafLabels: {
         weight: '体重',
         bodyFat: '体脂率',

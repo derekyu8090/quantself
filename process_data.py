@@ -42,8 +42,10 @@ def score_to_level(score):
 
 def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
                   body_mass, body_fat, spo2_records, sleep_breathing,
-                  workouts, exercise_time_daily, all_beds, age):
-    """Compute 6 risk dimensions from actual health data. Returns dict."""
+                  workouts, exercise_time_daily, all_beds, age,
+                  daylight_daily=None, headphone_exposure_daily=None,
+                  walking_asymmetry_daily=None):
+    """Compute 8 risk dimensions from actual health data. Returns dict."""
 
     risks = {}
 
@@ -61,6 +63,16 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
             (min(after_midnight_pct, 100) / 100 * 30) +  # after midnight (max 30)
             (min(after_2am_pct, 100) / 100 * 30)         # after 2am (max 30)
         ))
+        # Add daylight component to circadian risk
+        if daylight_daily:
+            dl_vals = [v for v in daylight_daily.values() if v > 0]
+            if dl_vals:
+                avg_dl = sum(dl_vals[-30:]) / len(dl_vals[-30:]) if len(dl_vals) >= 30 else sum(dl_vals) / len(dl_vals)
+                if avg_dl < 15:
+                    score = min(100, score + 10)  # very low daylight worsens circadian risk
+                elif avg_dl > 45:
+                    score = max(0, score - 5)  # good daylight is protective
+
         risks['circadianRhythm'] = {
             'level': score_to_level(score),
             'score': score,
@@ -220,6 +232,44 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
         'score': apnea_score,
         'label': '睡眠呼吸障碍',
     }
+
+    # 7. Hearing Health Risk
+    hearing_score = 0
+    if headphone_exposure_daily:
+        all_db = []
+        for vals in headphone_exposure_daily.values():
+            all_db.extend(vals)
+        if all_db:
+            avg_db = sum(all_db) / len(all_db)
+            above_80_pct = sum(1 for v in all_db if v > 80) / len(all_db) * 100
+            if avg_db > 85: hearing_score += 50
+            elif avg_db > 80: hearing_score += 30
+            elif avg_db > 75: hearing_score += 15
+            hearing_score += min(40, int(above_80_pct * 2))
+        hearing_score = min(100, hearing_score)
+        risks['hearingHealth'] = {
+            'level': score_to_level(hearing_score),
+            'score': hearing_score,
+            'label': '听力健康',
+        }
+
+    # 8. Mobility Risk (from walking asymmetry)
+    mobility_score = 0
+    if walking_asymmetry_daily:
+        asym_vals = []
+        for vals in walking_asymmetry_daily.values():
+            asym_vals.extend(vals)
+        if asym_vals:
+            avg_asym = sum(asym_vals) / len(asym_vals)
+            if avg_asym > 15: mobility_score += 50
+            elif avg_asym > 10: mobility_score += 30
+            elif avg_asym > 7: mobility_score += 15
+        mobility_score = min(100, mobility_score)
+        risks['mobilityRisk'] = {
+            'level': score_to_level(mobility_score),
+            'score': mobility_score,
+            'label': '步态/关节风险',
+        }
 
     return risks
 
@@ -545,23 +595,24 @@ def compute_baselines(rhr_daily, hrv_daily_map, nightly, steps_daily):
 
 def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nightly_list,
                             steps_daily, workouts, body_mass, body_fat, spo2_records,
-                            exercise_time_daily, age, sex):
+                            exercise_time_daily, age, sex, daylight_daily=None):
     """
-    Evidence-based Longevity Score (0-100) computed from 7 weighted components.
+    Evidence-based Longevity Score (0-100) computed from 8 weighted components.
 
     Weights based on meta-analysis effect sizes:
-    - VO2Max: 25% (Kodama 2009 JAMA: 13% mortality reduction per MET)
-    - Sleep Regularity: 20% (Windred 2024 Sleep: SRI > duration as predictor)
-    - Activity: 20% (Paluch 2022 Lancet: 8000 steps = 45% reduction)
-    - HRV: 15% (Hillebrand 2013: lowest vs highest SDNN HR=1.35)
-    - Body Composition: 10% (Jayedi 2022: modest independent effect)
+    - VO2Max: 23% (Kodama 2009 JAMA: 13% mortality reduction per MET)
+    - Sleep Regularity: 18% (Windred 2024 Sleep: SRI > duration as predictor)
+    - Activity: 18% (Paluch 2022 Lancet: 8000 steps = 45% reduction)
+    - HRV: 13% (Hillebrand 2013: lowest vs highest SDNN HR=1.35)
+    - Daylight: 8% (circadian rhythm entrainment via SCN)
+    - Body Composition: 8% (Jayedi 2022: modest independent effect)
     - SpO2: 5% (Yan 2024: HR 0.93 per unit increase)
     - Resting HR: 5% (Aune 2017: 9% per 10bpm)
 
     Returns: {
         'score': 65,
         'components': {
-            'vo2max': {'score': 55, 'weight': 25, 'detail': 'VO2Max 42.6, 35th percentile for age 28 male'},
+            'vo2max': {'score': 55, 'weight': 23, 'detail': 'VO2Max 42.6, 35th percentile for age 28 male'},
             ...
         },
         'monthly': [{'month': '2023-08', 'score': 62}, ...],
@@ -615,7 +666,7 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
         vo2_score = round(min(100, pctile))
         components['vo2max'] = {
             'score': vo2_score,
-            'weight': 25,
+            'weight': 23,
             'detail': f'VO2Max {latest_vo2:.1f}, {vo2_score}th percentile (age {age}, {sex})',
         }
 
@@ -649,7 +700,7 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
             sleep_score = round(regularity_score * 0.6 + dur_score * 0.4)
             components['sleepRegularity'] = {
                 'score': sleep_score,
-                'weight': 20,
+                'weight': 18,
                 'detail': f'Bedtime std {bed_std:.1f}h, avg duration {avg_dur:.1f}h',
             }
 
@@ -682,7 +733,7 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
         activity_score = round(step_score * 0.6 + exercise_score * 0.4)
         components['activity'] = {
             'score': activity_score,
-            'weight': 20,
+            'weight': 18,
             'detail': (
                 f'Avg {avg_steps:.0f} steps/day, {weekly_freq:.1f} workouts/week'
                 if workouts else f'Avg {avg_steps:.0f} steps/day'
@@ -723,7 +774,7 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
         hrv_score = round(hrv_score)
         components['hrv'] = {
             'score': hrv_score,
-            'weight': 15,
+            'weight': 13,
             'detail': (
                 f'SDNN mean {hrv_mean:.1f}ms, night/day ratio {ratio:.2f}'
                 if ratio is not None else f'SDNN mean {hrv_mean:.1f}ms'
@@ -765,7 +816,7 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
     bc_score = round(bc_score)
     components['bodyComposition'] = {
         'score': bc_score,
-        'weight': 10,
+        'weight': 8,
         'detail': (
             f'Body fat {body_fat[-1]["value"]:.1f}%' if body_fat
             else (f'BMI ~{bmi:.1f}' if bmi is not None else 'No data')
@@ -802,6 +853,28 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
             'weight': 5,
             'detail': f'Mean {spo2_mean:.1f}%, {below95_pct:.1f}% below 95%',
         }
+
+    # ── Daylight (8%) ────────────────────────────────────────
+    # Circadian rhythm: minimum 30 min outdoor light for SCN entrainment
+    if daylight_daily:
+        daylight_vals = [v for v in daylight_daily.values() if v > 0]
+        if daylight_vals:
+            recent_dl = daylight_vals[-30:] if len(daylight_vals) >= 30 else daylight_vals
+            avg_dl = sum(recent_dl) / len(recent_dl)
+
+            # Score: <10 min = very low (20), 10-20 = low (40), 20-40 = ok (65), 40-60 = good (80), >60 = excellent (95)
+            if avg_dl >= 60: dl_score = 95
+            elif avg_dl >= 40: dl_score = 75 + (avg_dl - 40) / 20 * 20
+            elif avg_dl >= 20: dl_score = 55 + (avg_dl - 20) / 20 * 20
+            elif avg_dl >= 10: dl_score = 30 + (avg_dl - 10) / 10 * 25
+            else: dl_score = max(10, avg_dl / 10 * 30)
+
+            dl_score = round(dl_score)
+            components['daylight'] = {
+                'score': dl_score,
+                'weight': 8,
+                'detail': f'Avg {avg_dl:.0f} min/day outdoor light',
+            }
 
     # ── 7. Resting Heart Rate (5%) ───────────────────────────────
     # Aune 2017: 9% increase per 10bpm
@@ -903,6 +976,153 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
         'monthly': monthly_scores,
         'trend': trend,
         'references': references,
+    }
+
+
+def compute_correlations(rhr_daily, hrv_daily_map, nightly_list, steps_daily,
+                         workouts, daylight_daily):
+    """
+    Compute Pearson correlations between all metric pairs over the full dataset.
+    Returns list of significant correlations with natural language descriptions.
+    """
+    import math
+
+    # Build aligned daily metric arrays
+    # Get all dates that have at least 2 metrics
+    metrics = {}
+
+    # RHR
+    rhr_map = {r['date']: r['value'] for r in rhr_daily}
+    if rhr_map:
+        metrics['rhr'] = rhr_map
+
+    # HRV (daily mean)
+    hrv_map = {}
+    for d, vs in hrv_daily_map.items():
+        if vs:
+            hrv_map[d] = sum(vs) / len(vs)
+    if hrv_map:
+        metrics['hrv'] = hrv_map
+
+    # Sleep duration
+    sleep_map = {n['date']: n['total'] for n in nightly_list if n.get('total', 0) > 2}
+    if sleep_map:
+        metrics['sleep'] = sleep_map
+
+    # Steps
+    step_map = {d: v for d, v in steps_daily.items() if v > 100}
+    if step_map:
+        metrics['steps'] = step_map
+
+    # Daylight
+    daylight_map = {d: v for d, v in daylight_daily.items() if v > 0}
+    if daylight_map:
+        metrics['daylight'] = daylight_map
+
+    # Bedtime
+    bedtime_map = {n['date']: n['bedtime'] for n in nightly_list if n.get('bedtime')}
+    if bedtime_map:
+        metrics['bedtime'] = bedtime_map
+
+    # Deep sleep
+    deep_map = {n['date']: n['deep'] for n in nightly_list if n.get('deep', 0) > 0}
+    if deep_map:
+        metrics['deepSleep'] = deep_map
+
+    # Workout next-day effect (1 if workout on prev day, 0 if not)
+    workout_dates = set(w.get('date', '') for w in workouts if w.get('date'))
+
+    def pearson(x, y):
+        """Compute Pearson correlation coefficient and p-value approximation."""
+        n = len(x)
+        if n < 10:
+            return None, None
+        mx = sum(x) / n
+        my = sum(y) / n
+        sx = math.sqrt(sum((xi - mx)**2 for xi in x) / n)
+        sy = math.sqrt(sum((yi - my)**2 for yi in y) / n)
+        if sx == 0 or sy == 0:
+            return None, None
+        r = sum((xi - mx) * (yi - my) for xi, yi in zip(x, y)) / (n * sx * sy)
+        # t-test approximation for significance
+        if abs(r) >= 0.999:
+            return r, 0.0
+        t = r * math.sqrt((n - 2) / (1 - r * r))
+        # Rough p-value (significant if |t| > 2 for n > 30)
+        p_significant = abs(t) > 2.0
+        return r, p_significant
+
+    # Compute all pairs
+    metric_names = list(metrics.keys())
+    results = []
+
+    labels = {
+        'rhr': 'Resting Heart Rate',
+        'hrv': 'HRV',
+        'sleep': 'Sleep Duration',
+        'steps': 'Daily Steps',
+        'daylight': 'Daylight Exposure',
+        'bedtime': 'Bedtime',
+        'deepSleep': 'Deep Sleep',
+    }
+
+    labels_zh = {
+        'rhr': '静息心率',
+        'hrv': '心率变异性',
+        'sleep': '睡眠时长',
+        'steps': '日均步数',
+        'daylight': '日光暴露',
+        'bedtime': '入睡时间',
+        'deepSleep': '深度睡眠',
+    }
+
+    for i in range(len(metric_names)):
+        for j in range(i + 1, len(metric_names)):
+            m1, m2 = metric_names[i], metric_names[j]
+            # Find common dates
+            common_dates = sorted(set(metrics[m1].keys()) & set(metrics[m2].keys()))
+            if len(common_dates) < 30:
+                continue
+
+            x = [metrics[m1][d] for d in common_dates]
+            y = [metrics[m2][d] for d in common_dates]
+
+            r, significant = pearson(x, y)
+            if r is None or not significant:
+                continue
+            if abs(r) < 0.1:  # too weak
+                continue
+
+            # Generate natural language description
+            strength = 'strong' if abs(r) >= 0.5 else 'moderate' if abs(r) >= 0.3 else 'weak'
+            direction = 'positive' if r > 0 else 'negative'
+
+            # Human-readable description
+            if r > 0:
+                desc_en = f"When {labels.get(m1, m1)} increases, {labels.get(m2, m2)} tends to increase ({strength})"
+                desc_zh = f"当{labels_zh.get(m1, m1)}升高时，{labels_zh.get(m2, m2)}倾向于升高（{strength}相关）"
+            else:
+                desc_en = f"When {labels.get(m1, m1)} increases, {labels.get(m2, m2)} tends to decrease ({strength})"
+                desc_zh = f"当{labels_zh.get(m1, m1)}升高时，{labels_zh.get(m2, m2)}倾向于降低（{strength}相关）"
+
+            results.append({
+                'metric1': m1,
+                'metric2': m2,
+                'r': round(r, 3),
+                'strength': strength,
+                'direction': direction,
+                'n': len(common_dates),
+                'description': {'en': desc_en, 'zh': desc_zh},
+            })
+
+    # Sort by absolute correlation strength
+    results.sort(key=lambda x: -abs(x['r']))
+
+    return {
+        'pairs': results,
+        'metrics': metric_names,
+        'labels': labels,
+        'labels_zh': labels_zh,
     }
 
 
@@ -1701,11 +1921,18 @@ def main(export_dir, arboleaf_path=None):
         vo2_list, rhr_list, hrv_records, hrv_daily_map, nightly_list,
         steps_daily, workouts_sorted, body_mass_sorted, body_fat_sorted,
         spo2_records, exercise_time_daily, age,
-        'male' if 'Male' in user_info.get('sex', '') else 'female'
+        'male' if 'Male' in user_info.get('sex', '') else 'female',
+        daylight_daily=daylight_daily,
     )
 
     # Compute baselines
     baselines = compute_baselines(rhr_list, hrv_daily_map, nightly_list, steps_daily)
+
+    # Compute correlations
+    correlations = compute_correlations(
+        rhr_list, hrv_daily_map, nightly_list, steps_daily,
+        workouts_sorted, daylight_daily
+    )
 
     overview = {
         'user': {
@@ -1730,6 +1957,9 @@ def main(export_dir, arboleaf_path=None):
             exercise_time_daily=exercise_time_daily,
             all_beds=all_beds,
             age=age,
+            daylight_daily=daylight_daily,
+            headphone_exposure_daily=headphone_exposure_daily,
+            walking_asymmetry_daily=walking_asymmetry_daily,
         ),
         'goals': compute_goals(
             rhr_stats=rhr_stats,
@@ -1748,6 +1978,7 @@ def main(export_dir, arboleaf_path=None):
         'healthScore': health_score,
         'longevityScore': longevity_score,
         'baselines': baselines,
+        'correlations': correlations,
     }
 
     with open(os.path.join(out_dir, 'overview.json'), 'w') as f:
@@ -1813,6 +2044,7 @@ def main(export_dir, arboleaf_path=None):
     print(f"  daylight: {len(daylight_list)} days")
     print(f"  walking metrics: speed {len(walking_speed_daily)}, step length {len(walking_step_length_daily)}, asymmetry {len(walking_asymmetry_daily)} days")
     print(f"  headphone exposure: {len(headphone_monthly_list)} months")
+    print(f"  correlations: {len(correlations['pairs'])} significant pairs")
 
 if __name__ == '__main__':
     import argparse

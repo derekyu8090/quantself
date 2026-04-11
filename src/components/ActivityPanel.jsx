@@ -631,6 +631,112 @@ function BasalEnergyMonthlyChart({ data }) {
   );
 }
 
+function WalkingSteadinessChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({
+    date: d.date,
+    value: d.value,
+    x: new Date(d.date).getTime(),
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <ScatterChart margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis
+          dataKey="x"
+          type="number"
+          scale="time"
+          domain={['dataMin', 'dataMax']}
+          {...theme.xAxis}
+          tickFormatter={(v) => formatDate(new Date(v).toISOString().slice(0, 10))}
+          tickCount={5}
+        />
+        <YAxis dataKey="value" {...theme.yAxis} unit="%" domain={[0, 100]} />
+        <Tooltip
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            const d = payload[0]?.payload;
+            if (!d) return null;
+            const t2 = getChartTheme();
+            return (
+              <div style={t2.tooltip.contentStyle}>
+                <div style={t2.tooltip.labelStyle}>{formatDate(d.date)}</div>
+                <div style={t2.tooltip.itemStyle}>{d.value != null ? `${d.value}%` : '--'}</div>
+              </div>
+            );
+          }}
+        />
+        <ReferenceLine
+          y={80}
+          stroke={theme.referenceLine.stroke}
+          strokeDasharray={theme.referenceLine.strokeDasharray}
+          strokeOpacity={theme.referenceLine.strokeOpacity}
+          label={{ value: 'OK 80%', fill: 'var(--text-muted)', fontSize: 11, position: 'right' }}
+        />
+        <ReferenceLine
+          y={50}
+          stroke="var(--color-heart)"
+          strokeDasharray="4 3"
+          strokeOpacity={0.6}
+          label={{ value: 'Low 50%', fill: 'var(--color-heart)', fontSize: 11, position: 'right' }}
+        />
+        <Scatter data={chartData} fill="var(--color-hrv)">
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill="var(--color-hrv)" opacity={0.8} />
+          ))}
+        </Scatter>
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
+function SixMinWalkChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({
+    date: d.date,
+    value: d.value,
+    x: new Date(d.date).getTime(),
+  }));
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <ScatterChart margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis
+          dataKey="x"
+          type="number"
+          scale="time"
+          domain={['dataMin', 'dataMax']}
+          {...theme.xAxis}
+          tickFormatter={(v) => formatDate(new Date(v).toISOString().slice(0, 10))}
+          tickCount={5}
+        />
+        <YAxis dataKey="value" {...theme.yAxis} unit=" m" domain={['auto', 'auto']} />
+        <Tooltip
+          content={({ active, payload }) => {
+            if (!active || !payload?.length) return null;
+            const d = payload[0]?.payload;
+            if (!d) return null;
+            const t2 = getChartTheme();
+            return (
+              <div style={t2.tooltip.contentStyle}>
+                <div style={t2.tooltip.labelStyle}>{formatDate(d.date)}</div>
+                <div style={t2.tooltip.itemStyle}>{d.value != null ? `${d.value} m` : '--'}</div>
+              </div>
+            );
+          }}
+        />
+        <Scatter data={chartData} fill="var(--color-activity)">
+          {chartData.map((entry, i) => (
+            <Cell key={i} fill="var(--color-activity)" opacity={0.8} />
+          ))}
+        </Scatter>
+      </ScatterChart>
+    </ResponsiveContainer>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 function ActivityPanel({ data, t }) {
@@ -746,6 +852,18 @@ function ActivityPanel({ data, t }) {
   const basalEnergyMonthlyFiltered = useMemo(
     () => filterByDateRange(basalEnergyMonthly, startDate, endDate, 'month'),
     [basalEnergyMonthly, startDate, endDate]
+  );
+
+  // Walking steadiness — sparse daily records, filter by date range
+  const walkingSteadinessFiltered = useMemo(
+    () => filterByDateRange(data?.walkingSteadiness, startDate, endDate),
+    [data?.walkingSteadiness, startDate, endDate]
+  );
+
+  // Six minute walk — sparse daily records, filter by date range
+  const sixMinWalkFiltered = useMemo(
+    () => filterByDateRange(data?.sixMinWalk, startDate, endDate),
+    [data?.sixMinWalk, startDate, endDate]
   );
 
   // Arboleaf — latest record (most recent by date)
@@ -985,6 +1103,24 @@ function ActivityPanel({ data, t }) {
           <BasalEnergyMonthlyChart data={basalEnergyMonthlyFiltered} />
         </div>
       </div>
+
+      {/* ── Section 6: Walking Steadiness + Six Minute Walk ── */}
+      {(data?.walkingSteadiness?.length > 0 || data?.sixMinWalk?.length > 0) && (
+        <div className="two-col">
+          <div className="chart-card">
+            <div className="chart-card-header">
+              <div className="chart-card-title">{t?.('activity.walkingSteadiness') ?? 'Walking Steadiness'}</div>
+            </div>
+            <WalkingSteadinessChart data={walkingSteadinessFiltered} />
+          </div>
+          <div className="chart-card">
+            <div className="chart-card-header">
+              <div className="chart-card-title">{t?.('activity.sixMinWalk') ?? 'Six Minute Walk Test'}</div>
+            </div>
+            <SixMinWalkChart data={sixMinWalkFiltered} />
+          </div>
+        </div>
+      )}
 
     </div>
   );

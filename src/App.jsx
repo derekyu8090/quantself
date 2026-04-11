@@ -10,13 +10,14 @@ import HealthScoreCard from './components/HealthScoreCard'
 import LongevityScoreCard from './components/LongevityScoreCard'
 import BaselineAlerts from './components/BaselineAlerts'
 import ECGPanel from './components/ECGPanel'
+import CorrelationPanel from './components/CorrelationPanel'
 import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
 import './print.css'
 
-const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'compare', 'ecg', 'glossary']
-const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', compare: '⇔', ecg: '♡', glossary: '?' }
+const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'compare', 'ecg', 'correlation', 'glossary']
+const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', compare: '⇔', ecg: '♡', correlation: '~', glossary: '?' }
 
 const DATA_URLS = {
   cardiovascular: '/data/cardiovascular.json',
@@ -237,6 +238,11 @@ function App() {
             <div id="panel-ecg" role="tabpanel" aria-labelledby="tab-ecg"
                  hidden={activeTab !== 'ecg'}>
               {activeTab === 'ecg' && <ECGPanel data={data.ecg} t={t} />}
+            </div>
+
+            <div id="panel-correlation" role="tabpanel" aria-labelledby="tab-correlation"
+                 hidden={activeTab !== 'correlation'}>
+              {activeTab === 'correlation' && <CorrelationPanel data={data.overview?.correlations} t={t} />}
             </div>
 
             <div id="panel-glossary" role="tabpanel" aria-labelledby="tab-glossary"

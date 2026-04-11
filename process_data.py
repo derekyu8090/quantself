@@ -1168,24 +1168,88 @@ def compute_correlations(rhr_daily, hrv_daily_map, nightly_list, steps_daily,
     }
 
 
+def call_llm(prompt, config=None):
+    """Call LLM with multi-provider support. Returns response text or raises."""
+    import urllib.request
+    import json as json_mod
+
+    cfg = (config or CONFIG).get('llm', {})
+    provider = cfg.get('provider', 'claude')
+    providers = cfg.get('providers', {})
+    pcfg = providers.get(provider, {})
+
+    model = pcfg.get('model', 'claude-sonnet-4-20250514')
+    api_url = pcfg.get('apiUrl', 'https://api.anthropic.com/v1/messages')
+    env_key = pcfg.get('envKey', 'ANTHROPIC_API_KEY')
+    api_key = os.environ.get(env_key, '') if env_key else ''
+
+    # Load from .env if not in environment
+    if not api_key and env_key:
+        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
+        if os.path.exists(env_path):
+            for line in open(env_path):
+                if line.strip().startswith(env_key + '='):
+                    api_key = line.strip().split('=', 1)[1].strip().strip('"\'')
+
+    if provider == 'claude':
+        req = urllib.request.Request(api_url,
+            data=json_mod.dumps({
+                'model': model, 'max_tokens': 1024,
+                'messages': [{'role': 'user', 'content': prompt}],
+            }).encode(),
+            headers={
+                'Content-Type': 'application/json',
+                'x-api-key': api_key,
+                'anthropic-version': '2023-06-01',
+            })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json_mod.loads(resp.read().decode())
+        return result['content'][0]['text']
+
+    elif provider == 'ollama':
+        req = urllib.request.Request(api_url,
+            data=json_mod.dumps({
+                'model': model, 'stream': False,
+                'messages': [{'role': 'user', 'content': prompt}],
+            }).encode(),
+            headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            result = json_mod.loads(resp.read().decode())
+        return result.get('message', {}).get('content', '')
+
+    elif provider == 'openai':
+        req = urllib.request.Request(api_url,
+            data=json_mod.dumps({
+                'model': model, 'max_tokens': 1024,
+                'messages': [{'role': 'user', 'content': prompt}],
+            }).encode(),
+            headers={
+                'Content-Type': 'application/json',
+                'Authorization': f'Bearer {api_key}',
+            })
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json_mod.loads(resp.read().decode())
+        return result['choices'][0]['message']['content']
+
+    elif provider == 'gemini':
+        url = api_url.replace('{model}', model) + f'?key={api_key}'
+        req = urllib.request.Request(url,
+            data=json_mod.dumps({
+                'contents': [{'parts': [{'text': prompt}]}],
+            }).encode(),
+            headers={'Content-Type': 'application/json'})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            result = json_mod.loads(resp.read().decode())
+        return result['candidates'][0]['content']['parts'][0]['text']
+
+    else:
+        raise ValueError(f'Unknown LLM provider: {provider}')
+
+
 def generate_weekly_report(health_score, longevity_score, risks, baselines, correlations,
                            rhr_list, hrv_daily_map, nightly_list, steps_daily,
                            daylight_daily, workouts, arboleaf_data):
-    """Generate a weekly health summary using Claude API."""
-    import os
-
-    # Load API key from .env file
-    api_key = os.environ.get('ANTHROPIC_API_KEY', '')
-    if not api_key:
-        env_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '.env')
-        if os.path.exists(env_path):
-            with open(env_path) as f:
-                for line in f:
-                    if line.strip().startswith('ANTHROPIC_API_KEY='):
-                        api_key = line.strip().split('=', 1)[1]
-
-    if not api_key:
-        return {'report': None, 'error': 'No ANTHROPIC_API_KEY found'}
+    """Generate a weekly health summary using LLM (multi-provider)."""
 
     # Build context from last 7 days
     from datetime import datetime, timedelta
@@ -1273,29 +1337,9 @@ Output format:
 ---ZH---
 (Chinese report)"""
 
-    # Call Claude API
+    # Call LLM (multi-provider)
     try:
-        import urllib.request
-        import json as json_mod
-
-        req = urllib.request.Request(
-            'https://api.anthropic.com/v1/messages',
-            data=json_mod.dumps({
-                'model': 'claude-sonnet-4-20250514',
-                'max_tokens': 1024,
-                'messages': [{'role': 'user', 'content': prompt}],
-            }).encode(),
-            headers={
-                'Content-Type': 'application/json',
-                'x-api-key': api_key,
-                'anthropic-version': '2023-06-01',
-            },
-        )
-
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            result = json_mod.loads(resp.read().decode())
-
-        text = result['content'][0]['text']
+        text = call_llm(prompt, CONFIG)
 
         # Parse EN and ZH sections
         en_report = ''
@@ -1323,6 +1367,88 @@ Output format:
             'error': str(e),
             'period': summary['period'],
         }
+
+
+def compute_hr_cycles(rhr_daily, hrv_daily_map, workouts):
+    """
+    Detect heart rate recovery cycles (typically 3-4 weeks).
+    Uses rolling mean of RHR and HRV to find periodic dips (recovery) and peaks (fatigue).
+    Returns cycle data for visualization and deload recommendations.
+    """
+    import math
+
+    if len(rhr_daily) < 42:  # need at least 6 weeks
+        return {'cycles': [], 'avgCycleLength': 0, 'recommendation': None}
+
+    # Build daily RHR series (last 120 days)
+    rhr_map = {r['date']: r['value'] for r in rhr_daily}
+    dates = sorted(rhr_map.keys())[-120:]
+
+    # 7-day rolling mean to smooth noise
+    rhr_vals = [rhr_map.get(d, 0) for d in dates]
+    window = 7
+    smoothed = []
+    for i in range(len(rhr_vals)):
+        start = max(0, i - window + 1)
+        chunk = [v for v in rhr_vals[start:i+1] if v > 0]
+        smoothed.append(sum(chunk) / len(chunk) if chunk else 0)
+
+    # Find local minima (recovery troughs) and maxima (fatigue peaks)
+    # A local minimum is a point lower than both 5-day neighbors
+    troughs = []
+    peaks = []
+    margin = 5
+    for i in range(margin, len(smoothed) - margin):
+        if smoothed[i] <= min(smoothed[i-margin:i]) and smoothed[i] <= min(smoothed[i+1:i+margin+1]):
+            troughs.append({'date': dates[i], 'value': round(smoothed[i], 1), 'day': i, 'type': 'trough'})
+        if smoothed[i] >= max(smoothed[i-margin:i]) and smoothed[i] >= max(smoothed[i+1:i+margin+1]):
+            peaks.append({'date': dates[i], 'value': round(smoothed[i], 1), 'day': i, 'type': 'peak'})
+
+    # Calculate cycle lengths (trough to trough)
+    cycle_lengths = []
+    for i in range(1, len(troughs)):
+        gap = troughs[i]['day'] - troughs[i-1]['day']
+        if 14 <= gap <= 42:  # valid cycle: 2-6 weeks
+            cycle_lengths.append(gap)
+
+    avg_cycle = round(sum(cycle_lengths) / len(cycle_lengths)) if cycle_lengths else 0
+
+    # Build smoothed series for charting
+    chart_data = [{'date': dates[i], 'rhr7d': round(smoothed[i], 1)} for i in range(len(dates)) if smoothed[i] > 0]
+
+    # Deload recommendation
+    recommendation = None
+    if avg_cycle > 0 and troughs:
+        last_trough_day = troughs[-1]['day']
+        days_since = len(dates) - 1 - last_trough_day
+        days_until_next = max(0, avg_cycle - days_since)
+        if days_until_next <= 5:
+            recommendation = {
+                'en': f'Recovery dip expected in ~{days_until_next} days. Consider a deload week.',
+                'zh': f'预计 ~{days_until_next} 天后进入恢复低谷期，建议安排减量周。',
+            }
+        elif days_since > avg_cycle * 0.7:
+            recommendation = {
+                'en': f'You are {days_since} days into a ~{avg_cycle}-day cycle. Fatigue may be building.',
+                'zh': f'当前处于 ~{avg_cycle} 天周期的第 {days_since} 天，疲劳可能正在积累。',
+            }
+
+    # Workout load overlay: count workouts per week for correlation
+    wo_weekly = {}
+    for w in workouts:
+        d = w.get('date', '')
+        if d:
+            week = d[:7] + '-W' + str((int(d[8:10]) - 1) // 7 + 1)
+            wo_weekly[week] = wo_weekly.get(week, 0) + 1
+
+    return {
+        'smoothed': chart_data,
+        'troughs': troughs,
+        'peaks': peaks,
+        'cycleLengths': cycle_lengths,
+        'avgCycleLength': avg_cycle,
+        'recommendation': recommendation,
+    }
 
 
 def compute_trends(rhr_daily, hrv_daily_map, nightly_list, steps_daily, config=None):
@@ -1384,6 +1510,26 @@ def compute_trends(rhr_daily, hrv_daily_map, nightly_list, steps_daily, config=N
 
 
 def main(export_dir, arboleaf_path=None):
+    import zipfile as _zipfile
+    import tempfile as _tempfile
+
+    # Support direct ZIP import — auto-extract to temp dir
+    _temp_dir = None
+    if export_dir.endswith('.zip') and os.path.isfile(export_dir):
+        print(f"Extracting ZIP: {export_dir} ...")
+        _temp_dir = _tempfile.mkdtemp(prefix='quantself_')
+        with _zipfile.ZipFile(export_dir, 'r') as zf:
+            zf.extractall(_temp_dir)
+        # Find export.xml inside (may be nested in apple_health_export/)
+        for root, dirs, files in os.walk(_temp_dir):
+            if 'export.xml' in files:
+                export_dir = root
+                break
+        else:
+            print(f"ERROR: No export.xml found inside {export_dir}")
+            sys.exit(1)
+        print(f"  Extracted to: {export_dir}")
+
     xml_path = os.path.join(export_dir, 'export.xml')
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
     os.makedirs(out_dir, exist_ok=True)
@@ -1437,6 +1583,7 @@ def main(export_dir, arboleaf_path=None):
     six_min_walk = []                             # SixMinuteWalkTestDistance: meters
 
     record_count = 0
+    source_stats = defaultdict(lambda: defaultdict(int))  # {sourceName: {recordType: count}}
 
     for event, elem in ET.iterparse(xml_path, events=('end',)):
         if elem.tag == 'Me':
@@ -1449,6 +1596,7 @@ def main(export_dir, arboleaf_path=None):
             rtype = elem.get('type', '')
             val_str = elem.get('value', '')
             start = elem.get('startDate', '')
+            source_name = elem.get('sourceName', 'Unknown')
             dt = parse_date(start)
             if dt is None:
                 elem.clear()
@@ -1456,6 +1604,10 @@ def main(export_dir, arboleaf_path=None):
 
             date_str = dt.strftime('%Y-%m-%d')
             hour = dt.hour
+
+            # Track source statistics
+            short_type = rtype.replace('HKQuantityTypeIdentifier', '').replace('HKCategoryTypeIdentifier', '')
+            source_stats[source_name][short_type] += 1
 
             if rtype == 'HKQuantityTypeIdentifierRestingHeartRate':
                 try:
@@ -2248,10 +2400,16 @@ def main(export_dir, arboleaf_path=None):
 
     # Compute trends
     trends = compute_trends(rhr_list, hrv_daily_map, nightly_list, steps_daily, CONFIG)
+
+    # Compute heart rate cycles
+    hr_cycles = compute_hr_cycles(rhr_list, hrv_daily_map, workouts_sorted)
+    if hr_cycles['avgCycleLength'] > 0:
+        print(f"  HR cycles: avg {hr_cycles['avgCycleLength']} days, {len(hr_cycles['troughs'])} recovery troughs detected")
     if trends:
         print(f"  Trend alerts: {len(trends)} detected")
 
-    print("Generating AI weekly report...")
+    llm_provider = CONFIG.get('llm', {}).get('provider', 'claude')
+    print(f"Generating AI weekly report (provider: {llm_provider})...")
     weekly_report = generate_weekly_report(
         health_score, longevity_score, risks, baselines, correlations,
         rhr_list, hrv_daily_map, nightly_list, steps_daily,
@@ -2292,6 +2450,9 @@ def main(export_dir, arboleaf_path=None):
         'correlations': correlations,
         'weeklyReport': weekly_report,
         'trends': trends,
+        'hrCycles': hr_cycles,
+        'sources': {name: {'total': sum(types.values()), 'types': dict(types)}
+                    for name, types in sorted(source_stats.items(), key=lambda x: -sum(x[1].values()))},
     }
 
     with open(os.path.join(out_dir, 'overview.json'), 'w') as f:
@@ -2342,6 +2503,12 @@ def main(export_dir, arboleaf_path=None):
     with open(os.path.join(out_dir, 'ecg.json'), 'w') as f:
         json.dump(ecg_data, f)
     print(f"  ecg.json done ({len(ecg_records)} recordings)")
+
+    # Clean up temp dir from ZIP extraction
+    if _temp_dir and os.path.exists(_temp_dir):
+        import shutil
+        shutil.rmtree(_temp_dir, ignore_errors=True)
+        print(f"  Cleaned up temp dir: {_temp_dir}")
 
     print("\nAll data files generated successfully!")
     print(f"Output: {out_dir}/")

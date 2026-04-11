@@ -39,5 +39,30 @@
   "sleepDebt": {
     "targetHours": 7.5,
     "maxDebtDays": 14
+  },
+  "llm": {
+    "provider": "claude",
+    "providers": {
+      "claude": {
+        "model": "claude-sonnet-4-20250514",
+        "apiUrl": "https://api.anthropic.com/v1/messages",
+        "envKey": "ANTHROPIC_API_KEY"
+      },
+      "ollama": {
+        "model": "deepseek-r1:8b",
+        "apiUrl": "http://localhost:11434/api/chat",
+        "envKey": null
+      },
+      "openai": {
+        "model": "gpt-4o-mini",
+        "apiUrl": "https://api.openai.com/v1/chat/completions",
+        "envKey": "OPENAI_API_KEY"
+      },
+      "gemini": {
+        "model": "gemini-2.0-flash",
+        "apiUrl": "https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent",
+        "envKey": "GEMINI_API_KEY"
+      }
+    }
   }
 }

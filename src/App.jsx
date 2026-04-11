@@ -11,6 +11,7 @@ import LongevityScoreCard from './components/LongevityScoreCard'
 import BaselineAlerts from './components/BaselineAlerts'
 import ECGPanel from './components/ECGPanel'
 import CorrelationPanel from './components/CorrelationPanel'
+import ChatPanel from './components/ChatPanel'
 import WeeklyReport from './components/WeeklyReport'
 import ErrorBoundary from './components/ErrorBoundary'
 import TrendAlerts from './components/TrendAlerts'
@@ -326,6 +327,7 @@ function App() {
               {activeTab === 'correlation' && (
                 <ErrorBoundary name="Insights">
                   <CorrelationPanel data={data.overview?.correlations} t={t} />
+                  <ChatPanel t={t} />
                 </ErrorBoundary>
               )}
             </div>

@@ -1,0 +1,144 @@
+#!/usr/bin/env python3
+"""
+QuantSelf Chat Server — Natural language health data Q&A
+Runs on localhost:5180 and proxies queries to the configured LLM provider.
+
+Usage:
+    python3 chat_server.py              # starts on port 5180
+    python3 chat_server.py --port 5181  # custom port
+"""
+
+import json
+import os
+import sys
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+# Import from process_data
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from process_data import call_llm, CONFIG
+
+DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
+
+
+def load_health_context():
+    """Load a compact summary of health data for LLM context."""
+    ctx = {}
+    for fname in ['overview.json', 'cardiovascular.json', 'sleep.json', 'activity.json']:
+        fpath = os.path.join(DATA_DIR, fname)
+        if os.path.exists(fpath):
+            with open(fpath) as f:
+                data = json.load(f)
+            # Keep only summary stats to stay within context limits
+            if fname == 'overview.json':
+                ctx['healthScore'] = data.get('healthScore', {}).get('latest')
+                ctx['healthTrend'] = data.get('healthScore', {}).get('trend')
+                ctx['longevityScore'] = data.get('longevityScore', {}).get('score')
+                ctx['longevityComponents'] = {
+                    k: v.get('score') for k, v in data.get('longevityScore', {}).get('components', {}).items()
+                }
+                ctx['risks'] = {k: {'score': v['score'], 'level': v['level']}
+                                for k, v in data.get('risks', {}).items()}
+                ctx['baselines'] = data.get('baselines', {})
+                ctx['trends'] = data.get('trends', [])
+                ctx['hrCycles'] = {
+                    'avgCycleLength': data.get('hrCycles', {}).get('avgCycleLength'),
+                    'recommendation': data.get('hrCycles', {}).get('recommendation'),
+                }
+                ctx['user'] = data.get('user', {})
+            elif fname == 'cardiovascular.json':
+                ctx['rhrStats'] = data.get('rhr', {}).get('stats', {})
+                ctx['hrvStats'] = data.get('hrv', {}).get('stats', {})
+                ctx['vo2Stats'] = data.get('vo2max', {}).get('stats', {})
+                ctx['spo2Stats'] = data.get('spo2', {}).get('stats', {})
+            elif fname == 'sleep.json':
+                ctx['sleepStats'] = data.get('stats', {})
+                last_nights = data.get('nightly', [])[-7:]
+                ctx['recentSleep'] = [{'date': n['date'], 'total': n['total'],
+                                       'deep': n.get('deep', 0), 'bedtime': n.get('bedtime')}
+                                      for n in last_nights]
+            elif fname == 'activity.json':
+                ctx['stepsStats'] = data.get('steps', {}).get('stats', {})
+                ctx['recentWorkouts'] = [
+                    {'date': w.get('date'), 'type': w.get('type'), 'duration': w.get('duration')}
+                    for w in (data.get('workouts', [])[-5:])
+                ]
+    return ctx
+
+
+SYSTEM_PROMPT = """You are a personal health data analyst for the QuantSelf dashboard.
+You have access to the user's health metrics summary below. Answer questions concisely
+and provide evidence-based advice. Always respond in the same language the user writes in.
+If asked about data you don't have, say so honestly.
+
+Current health data:
+{context}
+"""
+
+
+class ChatHandler(BaseHTTPRequestHandler):
+    health_context = None
+
+    def do_OPTIONS(self):
+        self.send_response(200)
+        self._cors_headers()
+        self.end_headers()
+
+    def do_POST(self):
+        if self.path != '/api/chat':
+            self.send_error(404)
+            return
+
+        length = int(self.headers.get('Content-Length', 0))
+        body = json.loads(self.rfile.read(length)) if length > 0 else {}
+        question = body.get('message', '').strip()
+
+        if not question:
+            self._json_response({'error': 'Empty message'}, 400)
+            return
+
+        # Lazy-load context
+        if ChatHandler.health_context is None:
+            ChatHandler.health_context = load_health_context()
+
+        ctx_str = json.dumps(ChatHandler.health_context, ensure_ascii=False, indent=1)
+        full_prompt = SYSTEM_PROMPT.format(context=ctx_str) + '\n\nUser question: ' + question
+
+        try:
+            answer = call_llm(full_prompt, CONFIG)
+            self._json_response({'answer': answer})
+        except Exception as e:
+            self._json_response({'error': str(e)}, 500)
+
+    def _json_response(self, data, status=200):
+        self.send_response(status)
+        self._cors_headers()
+        self.send_header('Content-Type', 'application/json')
+        self.end_headers()
+        self.wfile.write(json.dumps(data, ensure_ascii=False).encode())
+
+    def _cors_headers(self):
+        self.send_header('Access-Control-Allow-Origin', '*')
+        self.send_header('Access-Control-Allow-Methods', 'POST, OPTIONS')
+        self.send_header('Access-Control-Allow-Headers', 'Content-Type')
+
+    def log_message(self, fmt, *args):
+        print(f"  [chat] {args[0]}" if args else "")
+
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description='QuantSelf Chat Server')
+    parser.add_argument('--port', type=int, default=5180)
+    args = parser.parse_args()
+
+    server = HTTPServer(('0.0.0.0', args.port), ChatHandler)
+    print(f"QuantSelf Chat Server running on http://localhost:{args.port}")
+    print(f"  LLM provider: {CONFIG.get('llm', {}).get('provider', 'claude')}")
+    try:
+        server.serve_forever()
+    except KeyboardInterrupt:
+        print("\nChat server stopped.")
+
+
+if __name__ == '__main__':
+    main()

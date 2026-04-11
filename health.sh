@@ -5,13 +5,17 @@
 DIR="$(cd "$(dirname "$0")" && pwd)"
 PORT=5173
 
-# Kill any existing vite dev server on common ports
-for p in 5173 5174 5175; do
+# Kill any existing servers on common ports
+for p in 5173 5174 5175 5180; do
   lsof -ti:$p 2>/dev/null | xargs kill -9 2>/dev/null
 done
 
-# Start dev server in background
+# Start chat server in background
 cd "$DIR"
+/Users/user/opt/anaconda3/bin/python3 "$DIR/chat_server.py" &>/dev/null &
+CHAT_PID=$!
+
+# Start dev server in background
 npm run dev -- --port $PORT --host &>/dev/null &
 DEV_PID=$!
 
@@ -29,7 +33,9 @@ LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "unknown")
 
 # Open in default browser
 open "http://localhost:$PORT"
-echo "Dashboard running (PID: $DEV_PID)"
+echo "Dashboard running"
 echo "  Local:   http://localhost:$PORT"
 echo "  Mobile:  http://$LOCAL_IP:$PORT"
-echo "Press Ctrl+C or run 'kill $DEV_PID' to stop"
+echo "  Chat:    http://localhost:5180 (PID: $CHAT_PID)"
+echo "  Vite:    PID $DEV_PID"
+echo "Press Ctrl+C or run 'kill $DEV_PID $CHAT_PID' to stop"

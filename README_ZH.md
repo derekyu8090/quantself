@@ -255,10 +255,11 @@ quantself/
 - [x] **v1.3** — 循证长期评分 + 日历热力图 + 心电图 + 成就系统 + PDF导出
 - [x] **v1.4** — Tauri macOS 桌面应用 (12MB) + iCloud fswatch 自动同步
 - [x] **v1.5** — 11 个新 Apple Health 指标（日光暴露、步态分析、耳机音量等）+ Arboleaf 体脂秤接入（13 项身体成分指标）
+- [x] **v1.6** — 相关性发现引擎（11 对显著相关）、日光暴露纳入长期评分、8 维风险评估（听力 + 步态）、步行稳定性 + 六分钟步行测试图表
 
 ### 计划中
 
-- [ ] **v2.0** — iOS 应用（Capacitor + HealthKit 直接读取）、AI 周报（Claude API）、相关性发现引擎、多源支持（Garmin、Fitbit）
+- [ ] **v2.0** — iOS 应用（Capacitor + HealthKit 直接读取）、AI 周报（Claude API）、多源支持（Garmin、Fitbit）
 
 ## 技术栈
 

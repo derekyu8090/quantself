@@ -32,7 +32,8 @@ function strengthColor(strength) {
 
 function CorrelationCard({ pair, lang }) {
   const color = strengthColor(pair.strength);
-  const metricLabels = lang === 'zh' ? METRIC_LABELS_ZH : METRIC_LABELS_EN;
+  const dataLabels = lang === 'zh' ? (pair._labels_zh || {}) : (pair._labels || {});
+  const metricLabels = { ...(lang === 'zh' ? METRIC_LABELS_ZH : METRIC_LABELS_EN), ...dataLabels };
   const description = lang === 'zh' ? pair.description?.zh : pair.description?.en;
   const arrow = pair.r > 0 ? '↗' : '↘';
   const arrowColor = pair.r > 0 ? 'var(--color-hrv)' : 'var(--color-heart)';
@@ -200,10 +201,11 @@ function CorrelationPanel({ data, t }) {
   // Detect language: if app title is English string we are in EN, else ZH
   const lang = t?.('app.title') === 'HealthDash' && t?.('tabs.glossary') === 'Glossary' ? 'en' : 'zh';
 
-  // Sort by absolute r value descending, show top 5
+  // Sort by absolute r value descending, show top 5, enrich with data labels
   const top5 = [...data.pairs]
     .sort((a, b) => Math.abs(b.r) - Math.abs(a.r))
-    .slice(0, 5);
+    .slice(0, 5)
+    .map(p => ({ ...p, _labels: data.labels, _labels_zh: data.labels_zh }));
 
   return (
     <div className="panel" role="main" aria-label={t?.('tabs.correlation') ?? 'Insights'}>

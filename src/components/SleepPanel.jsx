@@ -32,6 +32,7 @@ import {
   Legend,
   ReferenceLine,
   ResponsiveContainer,
+  ComposedChart,
 } from 'recharts';
 import StatCard from './StatCard';
 import CalendarHeatmap from './CalendarHeatmap';
@@ -526,7 +527,76 @@ export default function SleepPanel({ data, t }) {
       />
 
       {/* ------------------------------------------------------------------ */}
-      {/* Row 6 — Breathing Disturbances + Wrist Temperature side by side     */}
+      {/* Row 6 — Sleep Debt Tracker                                          */}
+      {/* ------------------------------------------------------------------ */}
+      {data.sleepDebt?.length > 0 && (
+        <div className="chart-card" role="region" aria-label="Sleep debt tracker">
+          <div className="chart-card-header">
+            <div>
+              <h3 className="section-title">{t?.('sleep.sleepDebt') ?? 'Sleep Debt Tracker'}</h3>
+              <p className="chart-card-title">{t?.('sleep.sleepDebtSub') ?? 'Cumulative deficit vs target'}</p>
+            </div>
+          </div>
+          <ResponsiveContainer width="100%" height={260}>
+            <AreaChart
+              data={filterByDateRange(data.sleepDebt, startDate, endDate)}
+              margin={{ top: 4, right: 16, left: 0, bottom: 0 }}
+            >
+              <CartesianGrid stroke={theme.grid.stroke} strokeDasharray="0" vertical={false} />
+              <XAxis
+                dataKey="date"
+                tickFormatter={(d) => d.slice(5)}
+                {...theme.xAxis}
+                interval="preserveStartEnd"
+              />
+              <YAxis {...theme.yAxis} domain={[0, 'auto']} unit="h" width={36} />
+              <Tooltip
+                contentStyle={theme.tooltip.contentStyle}
+                labelStyle={theme.tooltip.labelStyle}
+                formatter={(val, name) => {
+                  const labels = {
+                    cumulativeDebt: t?.('sleep.cumulativeDebt') ?? 'Cumulative Debt',
+                    duration: t?.('sleep.total') ?? 'Total',
+                  };
+                  return [`${val}h`, labels[name] || name];
+                }}
+              />
+              <ReferenceLine
+                y={data.sleepDebt[0]?.target ?? 7.5}
+                stroke="var(--color-green)"
+                strokeDasharray="4 3"
+                label={{
+                  value: `${t?.('sleep.target') ?? 'Target'} ${data.sleepDebt[0]?.target ?? 7.5}h`,
+                  fill: 'var(--color-green)',
+                  fontSize: 10,
+                  position: 'insideTopRight',
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="cumulativeDebt"
+                stroke="var(--color-red)"
+                fill="var(--color-red)"
+                fillOpacity={0.15}
+                strokeWidth={2}
+                dot={false}
+                name="cumulativeDebt"
+              />
+              <Line
+                type="monotone"
+                dataKey="duration"
+                stroke="var(--color-sleep)"
+                strokeWidth={1.5}
+                dot={false}
+                name="duration"
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      )}
+
+      {/* ------------------------------------------------------------------ */}
+      {/* Row 7 — Breathing Disturbances + Wrist Temperature side by side     */}
       {/* ------------------------------------------------------------------ */}
       {(bdMonthlyFiltered.length > 0 || tempMonthlyFiltered.length > 0) && (
         <div className="two-col">

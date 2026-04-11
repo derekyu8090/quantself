@@ -16,7 +16,17 @@ function WeeklyReport({ data, t }) {
 
   if (!report) return null;
 
-  // Simple markdown-to-JSX: handle **bold**, ## headings, - bullets
+  // Safe markdown rendering — no dangerouslySetInnerHTML
+  const parseBold = (str) => {
+    const parts = str.split(/(\*\*.*?\*\*)/g);
+    return parts.map((part, j) => {
+      if (part.startsWith('**') && part.endsWith('**')) {
+        return <strong key={j}>{part.slice(2, -2)}</strong>;
+      }
+      return part;
+    });
+  };
+
   const renderMarkdown = (text) => {
     return text.split('\n').map((line, i) => {
       if (line.startsWith('## ')) {
@@ -36,7 +46,6 @@ function WeeklyReport({ data, t }) {
         );
       }
       if (line.startsWith('- ')) {
-        const content = line.slice(2).replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         return (
           <div
             key={i}
@@ -46,18 +55,19 @@ function WeeklyReport({ data, t }) {
               color: 'var(--text-primary)',
               lineHeight: 1.6,
             }}
-            dangerouslySetInnerHTML={{ __html: '&bull; ' + content }}
-          />
+          >
+            &bull; {parseBold(line.slice(2))}
+          </div>
         );
       }
       if (line.includes('**')) {
-        const content = line.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
         return (
           <p
             key={i}
             style={{ fontSize: '13px', color: 'var(--text-primary)', lineHeight: 1.6, margin: 0 }}
-            dangerouslySetInnerHTML={{ __html: content }}
-          />
+          >
+            {parseBold(line)}
+          </p>
         );
       }
       if (line.trim() === '') return null;

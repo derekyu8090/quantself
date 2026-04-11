@@ -1,0 +1,43 @@
+{
+  "scoring": {
+    "daily": {
+      "weights": {"rhr": 13, "hrv": 18, "sleep": 23, "activity": 13, "recovery": 13, "body": 10, "daylight": 10},
+      "minComponents": 3
+    },
+    "longevity": {
+      "weights": {"vo2max": 23, "sleepRegularity": 18, "activity": 18, "hrv": 13, "daylight": 8, "bodyComposition": 8, "spo2": 5, "restingHR": 5}
+    }
+  },
+  "risk": {
+    "circadian": {"bedStdMax": 4, "afterMidnightWeight": 30, "after2amWeight": 30, "lowDaylightThreshold": 15, "goodDaylightThreshold": 45},
+    "cardioFitness": {"vo2Brackets": [35, 39, 44, 49], "vo2Scores": [90, 75, 50, 25, 5]},
+    "chronicStress": {"hrvBrackets": [30, 40, 50, 60], "hrvScores": [80, 60, 40, 25, 10], "nightDayRatioThreshold": 1.05},
+    "metabolic": {"bodyFatBrackets": [15, 20, 25], "stepBrackets": [4000, 6000, 8000], "visceralFatBrackets": [7, 10, 15], "skeletalMuscleBrackets": [40, 45, 55]},
+    "cardiovascular": {"rhrHighThreshold": 75, "spo2Below90Threshold": 2},
+    "sleepApnea": {"bdBrackets": [1.5, 3, 5], "nightSpo2Below95Threshold": [5, 10]},
+    "hearing": {"dbBrackets": [75, 80, 85], "above80PctWeight": 2},
+    "mobility": {"asymmetryBrackets": [7, 10, 15]}
+  },
+  "anomaly": {
+    "rhrSigma": 2,
+    "hrvSigma": 2,
+    "sleepMinHours": 4,
+    "bedtimeAfterHour": 28,
+    "stepsLowThreshold": 2000,
+    "spo2LowThreshold": 92
+  },
+  "goals": {
+    "bedtimeMin": 22,
+    "rhrTarget": 55,
+    "stepsTarget": [7000, 8000, 10000, 12000],
+    "exerciseFreqTarget": [3, 4]
+  },
+  "trends": {
+    "windowDays": 14,
+    "significantDelta": 3
+  },
+  "sleepDebt": {
+    "targetHours": 7.5,
+    "maxDebtDays": 14
+  }
+}

@@ -20,6 +20,18 @@ import sys
 import statistics
 from datetime import datetime, timedelta
 from collections import defaultdict
+import traceback
+
+# Load configuration
+_CONFIG_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'health_config.json')
+def load_config():
+    if os.path.exists(_CONFIG_PATH):
+        with open(_CONFIG_PATH) as f:
+            return json.load(f)
+    return {}
+
+CONFIG = load_config()
+
 
 def parse_date(s):
     """Parse Apple Health date string to date only."""
@@ -27,7 +39,7 @@ def parse_date(s):
         return None
     try:
         return datetime.strptime(s[:19], '%Y-%m-%d %H:%M:%S')
-    except:
+    except (ValueError, TypeError):
         return None
 
 
@@ -48,6 +60,12 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
     """Compute 8 risk dimensions from actual health data. Returns dict."""
 
     risks = {}
+
+    # Pre-compute shared values to avoid duplication
+    rhr_values = [r['value'] for r in rhr_list]
+    rhr_mean = sum(rhr_values) / len(rhr_values) if rhr_values else 0
+    rhr_std = (sum((v - rhr_mean) ** 2 for v in rhr_values) / len(rhr_values)) ** 0.5 if len(rhr_values) > 1 else 0
+    hrv_values = [r['value'] for r in hrv_records]
 
     # 1. Circadian Rhythm Risk
     # Based on: bedtime std deviation, % nights after midnight, bedtime consistency
@@ -112,8 +130,6 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
 
     # 3. Chronic Stress Risk
     # Based on: HRV mean vs age baseline, HRV night/day ratio, RHR elevation
-    hrv_values = [r['value'] for r in hrv_records]
-    rhr_values = [r['value'] for r in rhr_list]
     if hrv_values:
         hrv_mean = sum(hrv_values) / len(hrv_values)
         # For age 28 male, healthy HRV should be 50-80ms
@@ -198,10 +214,7 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
     # 5. Cardiovascular Event Risk
     # Based on: RHR anomaly frequency, SpO2 drops, HRV stability
     cv_score = 0
-    rhr_values = [r['value'] for r in rhr_list]
     if rhr_values:
-        rhr_mean = sum(rhr_values) / len(rhr_values)
-        rhr_std = (sum((v - rhr_mean) ** 2 for v in rhr_values) / len(rhr_values)) ** 0.5
         anomaly_count = sum(1 for v in rhr_values if v > rhr_mean + 2 * rhr_std)
         anomaly_pct = anomaly_count / len(rhr_values) * 100
         if anomaly_pct > 5: cv_score += 20
@@ -215,7 +228,6 @@ def compute_risks(rhr_list, hrv_records, vo2_list, nightly_list, steps_daily,
 
     # Low resting HR is protective
     if rhr_values:
-        rhr_mean = sum(rhr_values) / len(rhr_values)
         if rhr_mean < 55: cv_score = max(0, cv_score - 10)  # athletic heart is protective
         elif rhr_mean > 75: cv_score += 20
 
@@ -476,7 +488,7 @@ def compute_health_score(rhr_daily, hrv_daily_map, nightly, steps_daily, workout
 
         # Only compute if we have enough components
         if len(components) >= 3:
-            weights = {'rhr': 13, 'hrv': 18, 'sleep': 23, 'activity': 13, 'recovery': 13, 'body': 10, 'daylight': 10}
+            weights = CONFIG.get('scoring', {}).get('daily', {}).get('weights', {'rhr': 13, 'hrv': 18, 'sleep': 23, 'activity': 13, 'recovery': 13, 'body': 10, 'daylight': 10})
             total_weight = sum(weights[k] for k in components if k in weights)
             if total_weight > 0:
                 score = sum(components.get(k, 50) * weights.get(k, 0) for k in weights) / 100
@@ -1313,12 +1325,84 @@ Output format:
         }
 
 
+def compute_trends(rhr_daily, hrv_daily_map, nightly_list, steps_daily, config=None):
+    """Detect sustained trends (2+ weeks) in key metrics. Returns list of trend alerts."""
+    cfg = (config or {}).get('trends', {})
+    window = cfg.get('windowDays', 14)
+    delta_threshold = cfg.get('significantDelta', 3)
+
+    trends = []
+
+    def check_trend(values, metric_name, label_en, label_zh, unit, higher_is_better=True):
+        if len(values) < window * 2:
+            return
+        recent = values[-window:]
+        previous = values[-window*2:-window]
+        recent_mean = sum(recent) / len(recent)
+        prev_mean = sum(previous) / len(previous)
+        pct_change = ((recent_mean - prev_mean) / prev_mean * 100) if prev_mean != 0 else 0
+
+        if abs(pct_change) < delta_threshold:
+            return
+
+        direction = 'up' if recent_mean > prev_mean else 'down'
+        is_concerning = (direction == 'down' and higher_is_better) or (direction == 'up' and not higher_is_better)
+
+        trends.append({
+            'metric': metric_name,
+            'direction': direction,
+            'pctChange': round(pct_change, 1),
+            'recentMean': round(recent_mean, 1),
+            'previousMean': round(prev_mean, 1),
+            'concerning': is_concerning,
+            'label': {'en': label_en, 'zh': label_zh},
+            'unit': unit,
+            'window': window,
+        })
+
+    # RHR (lower is better)
+    rhr_vals = [r['value'] for r in rhr_daily]
+    check_trend(rhr_vals, 'rhr', 'Resting Heart Rate', '静息心率', 'bpm', higher_is_better=False)
+
+    # HRV (higher is better)
+    hrv_sorted = sorted(hrv_daily_map.items())
+    if hrv_sorted:
+        hrv_vals = [sum(vs)/len(vs) for _, vs in hrv_sorted]
+        check_trend(hrv_vals, 'hrv', 'HRV', '心率变异性', 'ms', higher_is_better=True)
+
+    # Sleep (higher is better, up to a point)
+    sleep_vals = [n['total'] for n in nightly_list if n.get('total', 0) > 2]
+    check_trend(sleep_vals, 'sleep', 'Sleep Duration', '睡眠时长', 'h', higher_is_better=True)
+
+    # Steps (higher is better)
+    step_items = sorted(steps_daily.items())
+    if step_items:
+        step_vals = [v for _, v in step_items if v > 100]
+        check_trend(step_vals, 'steps', 'Daily Steps', '日均步数', 'steps', higher_is_better=True)
+
+    return trends
+
+
 def main(export_dir, arboleaf_path=None):
     xml_path = os.path.join(export_dir, 'export.xml')
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
     os.makedirs(out_dir, exist_ok=True)
 
-    print(f"Parsing {xml_path} ...")
+    # Verify XML export completeness
+    if not os.path.exists(xml_path):
+        print(f"ERROR: {xml_path} does not exist")
+        sys.exit(1)
+    file_size = os.path.getsize(xml_path)
+    if file_size < 1000:
+        print(f"WARNING: XML file is very small ({file_size} bytes), may be incomplete")
+    else:
+        with open(xml_path, 'rb') as f:
+            f.seek(max(0, file_size - 200))
+            tail = f.read().decode('utf-8', errors='ignore')
+            if '</HealthData>' not in tail:
+                print("WARNING: XML file may be truncated (missing closing </HealthData> tag)")
+
+    print(f"Parsing {xml_path} ({file_size / 1024 / 1024:.1f} MB) ...")
 
     # Collectors
     rhr_daily = {}
@@ -1377,25 +1461,25 @@ def main(export_dir, arboleaf_path=None):
                 try:
                     v = float(val_str)
                     rhr_daily[date_str] = v
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierHeartRateVariabilitySDNN':
                 try:
                     v = float(val_str)
                     hrv_records.append({'date': date_str, 'hour': hour, 'value': v})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierVO2Max':
                 try:
                     v = float(val_str)
                     vo2max_records.append({'date': date_str, 'value': v})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierWalkingHeartRateAverage':
                 try:
                     v = float(val_str)
                     walking_hr_records.append({'date': date_str, 'value': v})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKCategoryTypeIdentifierSleepAnalysis':
                 source = elem.get('sourceName', '')
@@ -1416,108 +1500,108 @@ def main(export_dir, arboleaf_path=None):
             elif rtype == 'HKQuantityTypeIdentifierStepCount':
                 try:
                     steps_daily[date_str] += float(val_str)
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierActiveEnergyBurned':
                 try:
                     active_energy_daily[date_str] += float(val_str)
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierAppleExerciseTime':
                 try:
                     exercise_time_daily[date_str] += float(val_str)
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierBodyMass':
                 try:
                     body_mass.append({'date': date_str, 'value': float(val_str)})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierBodyFatPercentage':
                 try:
                     body_fat.append({'date': date_str, 'value': round(float(val_str) * 100, 1)})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierOxygenSaturation':
                 try:
                     v = float(val_str) * 100
                     spo2_records.append({'date': date_str, 'hour': hour, 'value': v})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierHeartRate':
                 try:
                     hr_by_hour[hour].append(float(val_str))
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierRespiratoryRate':
                 try:
                     resp_records.append({'date': date_str, 'hour': hour, 'value': float(val_str)})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierAppleSleepingBreathingDisturbances':
                 try:
                     sleep_breathing.append({'date': date_str, 'value': float(val_str)})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierAppleSleepingWristTemperature':
                 try:
                     sleep_temp.append({'date': date_str, 'value': float(val_str)})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierWalkingSpeed':
                 try:
                     walking_speed_daily[date_str].append(float(val_str))
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierWalkingStepLength':
                 try:
                     walking_step_length_daily[date_str].append(float(val_str) * 100)  # m to cm
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierWalkingAsymmetryPercentage':
                 try:
                     walking_asymmetry_daily[date_str].append(float(val_str) * 100)  # fraction to %
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierAppleWalkingSteadiness':
                 try:
                     walking_steadiness.append({'date': date_str, 'value': round(float(val_str) * 100, 1)})
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierTimeInDaylight':
                 try:
                     daylight_daily[date_str] += float(val_str)  # minutes
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierDistanceWalkingRunning':
                 try:
                     distance_daily[date_str] += float(val_str)  # km
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierFlightsClimbed':
                 try:
                     flights_daily[date_str] += float(val_str)
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierBasalEnergyBurned':
                 try:
                     basal_energy_daily[date_str] += float(val_str)
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierHeadphoneAudioExposure':
                 try:
                     headphone_exposure_daily[date_str].append(float(val_str))
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierDistanceCycling':
                 try:
                     cycling_distance_daily[date_str] += float(val_str)
-                except: pass
+                except (ValueError, TypeError): pass
 
             elif rtype == 'HKQuantityTypeIdentifierSixMinuteWalkTestDistance':
                 try:
                     six_min_walk.append({'date': date_str, 'value': round(float(val_str))})
-                except: pass
+                except (ValueError, TypeError): pass
 
             record_count += 1
             if record_count % 1000000 == 0:
@@ -1540,32 +1624,32 @@ def main(export_dir, arboleaf_path=None):
             }
             try:
                 wo['duration'] = round(float(elem.get('duration', 0)))
-            except: pass
+            except (ValueError, TypeError): pass
             try:
                 wo['calories'] = round(float(elem.get('totalEnergyBurned', 0)))
-            except: pass
+            except (ValueError, TypeError): pass
 
             for stat in elem.findall('WorkoutStatistics'):
                 st = stat.get('type', '')
                 if 'HeartRate' in st and 'Recovery' not in st and 'Variability' not in st and 'Walking' not in st:
                     try: wo['avgHR'] = round(float(stat.get('average', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
                     try: wo['maxHR'] = round(float(stat.get('maximum', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
                     try: wo['minHR'] = round(float(stat.get('minimum', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
                 elif 'ActiveEnergyBurned' in st:
                     try: wo['calories'] = round(float(stat.get('sum', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
                 elif 'DistanceSwimming' in st:
                     try: wo['swimDistance'] = round(float(stat.get('sum', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
                 elif 'SwimmingStrokeCount' in st:
                     try: wo['strokeCount'] = round(float(stat.get('sum', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
                 elif 'Distance' in st and 'Swimming' not in st:
                     try: wo['distance'] = round(float(stat.get('sum', 0)))
-                    except: pass
+                    except (ValueError, TypeError): pass
 
             dt = parse_date(wo['startDate'])
             if dt:
@@ -1582,7 +1666,7 @@ def main(export_dir, arboleaf_path=None):
                     'exerciseTime': round(float(elem.get('appleExerciseTime', 0))),
                     'standHours': round(float(elem.get('appleStandHours', 0))),
                 })
-            except: pass
+            except (ValueError, TypeError): pass
             elem.clear()
 
     print(f"  Total records: {record_count}")
@@ -1860,6 +1944,23 @@ def main(export_dir, arboleaf_path=None):
         'wristTemperature': sleep_temp_sorted,
     }
 
+    # Sleep debt computation
+    sleep_debt_target = CONFIG.get('sleepDebt', {}).get('targetHours', 7.5)
+    sleep_debt_max_days = CONFIG.get('sleepDebt', {}).get('maxDebtDays', 14)
+    sleep_debt_data = []
+    cumulative_debt = 0
+    for n in nightly_list[-(sleep_debt_max_days * 4):]:
+        deficit = sleep_debt_target - n['total']
+        cumulative_debt = max(0, cumulative_debt + deficit)
+        sleep_debt_data.append({
+            'date': n['date'],
+            'duration': round(n['total'], 2),
+            'target': sleep_debt_target,
+            'deficit': round(deficit, 2),
+            'cumulativeDebt': round(cumulative_debt, 2),
+        })
+    sleep_data['sleepDebt'] = sleep_debt_data
+
     with open(os.path.join(out_dir, 'sleep.json'), 'w') as f:
         json.dump(sleep_data, f)
     print("  sleep.json done")
@@ -1999,14 +2100,14 @@ def main(export_dir, arboleaf_path=None):
                     from datetime import datetime as dt_parse
                     dt = dt_parse.strptime(str(date_val), '%m/%d/%Y %H:%M:%S')
                     date_str = dt.strftime('%Y-%m-%d')
-                except:
+                except (ValueError, TypeError):
                     continue
 
                 def safe_float(v):
                     try:
                         f = float(v)
                         return f if f > 0 else None
-                    except:
+                    except (ValueError, TypeError):
                         return None
 
                 record = {'date': date_str}
@@ -2037,8 +2138,10 @@ def main(export_dir, arboleaf_path=None):
             print(f"  Arboleaf: {len(arboleaf_data)} body composition records")
         except ImportError:
             print("  WARNING: openpyxl not installed. Run: pip install openpyxl")
+            print("  Arboleaf body composition data will be skipped.")
         except Exception as e:
             print(f"  WARNING: Failed to parse Arboleaf data: {e}")
+            traceback.print_exc()
 
     if arboleaf_data:
         activity_data['arboleaf'] = arboleaf_data
@@ -2057,7 +2160,7 @@ def main(export_dir, arboleaf_path=None):
     try:
         dob_dt = datetime.strptime(dob, '%Y-%m-%d')
         age = (datetime.now() - dob_dt).days // 365
-    except:
+    except (ValueError, TypeError):
         age = 28
 
     # Anomaly detection
@@ -2143,6 +2246,11 @@ def main(export_dir, arboleaf_path=None):
         arboleaf_data=arboleaf_data,
     )
 
+    # Compute trends
+    trends = compute_trends(rhr_list, hrv_daily_map, nightly_list, steps_daily, CONFIG)
+    if trends:
+        print(f"  Trend alerts: {len(trends)} detected")
+
     print("Generating AI weekly report...")
     weekly_report = generate_weekly_report(
         health_score, longevity_score, risks, baselines, correlations,
@@ -2183,6 +2291,7 @@ def main(export_dir, arboleaf_path=None):
         'baselines': baselines,
         'correlations': correlations,
         'weeklyReport': weekly_report,
+        'trends': trends,
     }
 
     with open(os.path.join(out_dir, 'overview.json'), 'w') as f:
@@ -2211,7 +2320,7 @@ def main(export_dir, arboleaf_path=None):
                     elif len(row) == 1:
                         try:
                             samples.append(float(row[0]))
-                        except:
+                        except (ValueError, TypeError):
                             pass
 
             # Downsample to ~256 points for display (from ~15000 at 512Hz)

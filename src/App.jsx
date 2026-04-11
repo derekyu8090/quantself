@@ -12,6 +12,9 @@ import BaselineAlerts from './components/BaselineAlerts'
 import ECGPanel from './components/ECGPanel'
 import CorrelationPanel from './components/CorrelationPanel'
 import WeeklyReport from './components/WeeklyReport'
+import ErrorBoundary from './components/ErrorBoundary'
+import TrendAlerts from './components/TrendAlerts'
+import SettingsPanel from './components/SettingsPanel'
 import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
@@ -87,6 +90,41 @@ function App() {
     return () => { cancelled = true }
   }, [])
 
+  // Settings modal
+  const [showSettings, setShowSettings] = useState(false)
+
+  // CSV export handler
+  const handleExportCSV = () => {
+    const exportData = (name, rows, headers) => {
+      const csv = [headers.join(','), ...rows.map(r => headers.map(h => JSON.stringify(r[h] ?? '')).join(','))].join('\n')
+      const blob = new Blob(['\ufeff' + csv], { type: 'text/csv;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `quantself_${name}_${new Date().toISOString().slice(0, 10)}.csv`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+
+    if (activeTab === 'cardiovascular' && data.cardiovascular?.rhr?.daily) {
+      exportData('rhr', data.cardiovascular.rhr.daily, ['date', 'value'])
+    } else if (activeTab === 'sleep' && data.sleep?.nightly) {
+      exportData('sleep', data.sleep.nightly, ['date', 'total', 'core', 'deep', 'rem', 'bedtime', 'wakeTime'])
+    } else if (activeTab === 'activity' && data.activity?.steps?.daily) {
+      exportData('steps', data.activity.steps.daily, ['date', 'value'])
+    } else if (activeTab === 'risk' && data.overview?.healthScore?.daily) {
+      exportData('healthscore', data.overview.healthScore.daily, ['date', 'score', 'rhr', 'hrv', 'sleep', 'activity', 'recovery', 'body', 'daylight'])
+    } else {
+      const blob = new Blob([JSON.stringify(data.overview, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `quantself_overview_${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    }
+  }
+
   const dataRange = data.overview?.dataRange
   const dataRangeLabel = dataRange ? `${dataRange.start} \u2013 ${dataRange.end}` : null
 
@@ -128,6 +166,16 @@ function App() {
             {/* Export PDF */}
             <button className="export-btn print-hide" onClick={() => window.print()}>
               {t?.('app.export') ?? 'Export PDF'}
+            </button>
+
+            {/* Export CSV */}
+            <button className="export-btn print-hide" onClick={handleExportCSV}>
+              {t?.('app.exportCSV') ?? 'Export CSV'}
+            </button>
+
+            {/* Settings */}
+            <button className="export-btn print-hide" onClick={() => setShowSettings(true)}>
+              {t?.('settings.title') ?? 'Settings'}
             </button>
 
             {/* Language toggle */}
@@ -175,19 +223,33 @@ function App() {
         {!loading && !error && data.overview && (
           <div style={{ display: 'flex', gap: '16px', marginBottom: '24px', flexWrap: 'wrap' }}>
             <div style={{ flex: '1 1 280px' }}>
-              <HealthScoreCard data={data.overview.healthScore} t={t} />
+              <ErrorBoundary name="Health Score">
+                <HealthScoreCard data={data.overview.healthScore} t={t} />
+              </ErrorBoundary>
             </div>
             <div style={{ flex: '1 1 280px' }}>
-              <LongevityScoreCard data={data.overview?.longevityScore} t={t} />
+              <ErrorBoundary name="Longevity Score">
+                <LongevityScoreCard data={data.overview?.longevityScore} t={t} />
+              </ErrorBoundary>
             </div>
             <div style={{ flex: '1 1 280px' }}>
-              <BaselineAlerts baselines={data.overview.baselines} t={t} />
+              <ErrorBoundary name="Baseline Alerts">
+                <BaselineAlerts baselines={data.overview.baselines} t={t} />
+              </ErrorBoundary>
             </div>
           </div>
         )}
 
+        {!loading && !error && data.overview?.trends?.length > 0 && (
+          <ErrorBoundary name="Trend Alerts">
+            <TrendAlerts trends={data.overview.trends} t={t} />
+          </ErrorBoundary>
+        )}
+
         {!loading && !error && data.overview?.weeklyReport && (
-          <WeeklyReport data={data.overview.weeklyReport} t={t} />
+          <ErrorBoundary name="Weekly Report">
+            <WeeklyReport data={data.overview.weeklyReport} t={t} />
+          </ErrorBoundary>
         )}
 
         {!loading && !error && (
@@ -195,70 +257,92 @@ function App() {
             <div id="panel-cardiovascular" role="tabpanel" aria-labelledby="tab-cardiovascular"
                  hidden={activeTab !== 'cardiovascular'}>
               {activeTab === 'cardiovascular' && (
-                <CardiovascularPanel
-                  key={theme}
-                  data={data.cardiovascular}
-                  overview={data.overview}
-                  workouts={data.activity?.workouts}
-                  sleepNightly={data.sleep?.nightly}
-                  t={t}
-                />
+                <ErrorBoundary name="Cardiovascular">
+                  <CardiovascularPanel
+                    key={theme}
+                    data={data.cardiovascular}
+                    overview={data.overview}
+                    workouts={data.activity?.workouts}
+                    sleepNightly={data.sleep?.nightly}
+                    t={t}
+                  />
+                </ErrorBoundary>
               )}
             </div>
 
             <div id="panel-sleep" role="tabpanel" aria-labelledby="tab-sleep"
                  hidden={activeTab !== 'sleep'}>
               {activeTab === 'sleep' && (
-                <SleepPanel key={theme} data={data.sleep} t={t} />
+                <ErrorBoundary name="Sleep">
+                  <SleepPanel key={theme} data={data.sleep} t={t} />
+                </ErrorBoundary>
               )}
             </div>
 
             <div id="panel-activity" role="tabpanel" aria-labelledby="tab-activity"
                  hidden={activeTab !== 'activity'}>
               {activeTab === 'activity' && (
-                <ActivityPanel key={theme} data={data.activity} t={t} />
+                <ErrorBoundary name="Activity">
+                  <ActivityPanel key={theme} data={data.activity} t={t} />
+                </ErrorBoundary>
               )}
             </div>
 
             <div id="panel-risk" role="tabpanel" aria-labelledby="tab-risk"
                  hidden={activeTab !== 'risk'}>
               {activeTab === 'risk' && (
-                <RiskPanel key={theme} overview={data.overview} t={t} />
+                <ErrorBoundary name="Risk & Goals">
+                  <RiskPanel key={theme} overview={data.overview} t={t} />
+                </ErrorBoundary>
               )}
             </div>
 
             <div id="panel-compare" role="tabpanel" aria-labelledby="tab-compare"
                  hidden={activeTab !== 'compare'}>
               {activeTab === 'compare' && (
-                <ComparisonView
-                  key={theme}
-                  cardiovascular={data.cardiovascular}
-                  sleep={data.sleep}
-                  activity={data.activity}
-                  t={t}
-                />
+                <ErrorBoundary name="Compare">
+                  <ComparisonView
+                    key={theme}
+                    cardiovascular={data.cardiovascular}
+                    sleep={data.sleep}
+                    activity={data.activity}
+                    t={t}
+                  />
+                </ErrorBoundary>
               )}
             </div>
 
             <div id="panel-ecg" role="tabpanel" aria-labelledby="tab-ecg"
                  hidden={activeTab !== 'ecg'}>
-              {activeTab === 'ecg' && <ECGPanel data={data.ecg} t={t} />}
+              {activeTab === 'ecg' && (
+                <ErrorBoundary name="ECG">
+                  <ECGPanel data={data.ecg} t={t} />
+                </ErrorBoundary>
+              )}
             </div>
 
             <div id="panel-correlation" role="tabpanel" aria-labelledby="tab-correlation"
                  hidden={activeTab !== 'correlation'}>
-              {activeTab === 'correlation' && <CorrelationPanel data={data.overview?.correlations} t={t} />}
+              {activeTab === 'correlation' && (
+                <ErrorBoundary name="Insights">
+                  <CorrelationPanel data={data.overview?.correlations} t={t} />
+                </ErrorBoundary>
+              )}
             </div>
 
             <div id="panel-glossary" role="tabpanel" aria-labelledby="tab-glossary"
                  hidden={activeTab !== 'glossary'}>
               {activeTab === 'glossary' && (
-                <GlossaryPanel t={t} />
+                <ErrorBoundary name="Glossary">
+                  <GlossaryPanel t={t} />
+                </ErrorBoundary>
               )}
             </div>
           </>
         )}
       </main>
+
+      <SettingsPanel visible={showSettings} onClose={() => setShowSettings(false)} t={t} />
     </div>
     </DateRangeProvider>
   )

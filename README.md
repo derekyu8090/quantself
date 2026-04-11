@@ -254,10 +254,11 @@ quantself/
 - [x] **v1.2** -- Daily health score, baseline alerts, period comparison, exercise-recovery analysis
 - [x] **v1.3** -- Evidence-based longevity score, calendar heatmaps, ECG viewer, achievements, PDF export
 - [x] **v1.4** -- Tauri macOS desktop app (12MB), iCloud auto-sync with fswatch
+- [x] **v1.5** -- 11 new Apple Health metrics (daylight, mobility, audio exposure, etc.), Arboleaf body scale integration (13 body composition metrics)
 
 ### Planned
 
-- [ ] **v2.0** -- iOS app with direct HealthKit access (Capacitor), AI weekly reports (Claude API), multi-source support (Garmin, Fitbit)
+- [ ] **v2.0** -- iOS app with direct HealthKit access (Capacitor), AI weekly reports (Claude API), correlation discovery engine, multi-source support (Garmin, Fitbit)
 
 ## Tech Stack
 

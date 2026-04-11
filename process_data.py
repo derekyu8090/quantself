@@ -906,7 +906,7 @@ def compute_longevity_score(vo2_list, rhr_list, hrv_records, hrv_daily_map, nigh
     }
 
 
-def main(export_dir):
+def main(export_dir, arboleaf_path=None):
     xml_path = os.path.join(export_dir, 'export.xml')
     out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
     os.makedirs(out_dir, exist_ok=True)
@@ -932,6 +932,18 @@ def main(export_dir):
     activity_summaries = []
     user_info = {}
     hr_by_hour = defaultdict(list)
+
+    walking_speed_daily = defaultdict(list)       # WalkingSpeed: m/s
+    walking_step_length_daily = defaultdict(list) # WalkingStepLength: cm
+    walking_asymmetry_daily = defaultdict(list)   # WalkingAsymmetryPercentage: %
+    walking_steadiness = []                       # AppleWalkingSteadiness: % (sparse)
+    daylight_daily = defaultdict(float)           # TimeInDaylight: minutes per day (sum)
+    distance_daily = defaultdict(float)           # DistanceWalkingRunning: km per day (sum)
+    flights_daily = defaultdict(float)            # FlightsClimbed: count per day (sum)
+    basal_energy_daily = defaultdict(float)       # BasalEnergyBurned: kcal per day (sum)
+    headphone_exposure_daily = defaultdict(list)  # HeadphoneAudioExposure: dB
+    cycling_distance_daily = defaultdict(float)   # DistanceCycling: km per day (sum)
+    six_min_walk = []                             # SixMinuteWalkTestDistance: meters
 
     record_count = 0
 
@@ -1043,6 +1055,61 @@ def main(export_dir):
             elif rtype == 'HKQuantityTypeIdentifierAppleSleepingWristTemperature':
                 try:
                     sleep_temp.append({'date': date_str, 'value': float(val_str)})
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierWalkingSpeed':
+                try:
+                    walking_speed_daily[date_str].append(float(val_str))
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierWalkingStepLength':
+                try:
+                    walking_step_length_daily[date_str].append(float(val_str) * 100)  # m to cm
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierWalkingAsymmetryPercentage':
+                try:
+                    walking_asymmetry_daily[date_str].append(float(val_str) * 100)  # fraction to %
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierAppleWalkingSteadiness':
+                try:
+                    walking_steadiness.append({'date': date_str, 'value': round(float(val_str) * 100, 1)})
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierTimeInDaylight':
+                try:
+                    daylight_daily[date_str] += float(val_str)  # minutes
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierDistanceWalkingRunning':
+                try:
+                    distance_daily[date_str] += float(val_str)  # km
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierFlightsClimbed':
+                try:
+                    flights_daily[date_str] += float(val_str)
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierBasalEnergyBurned':
+                try:
+                    basal_energy_daily[date_str] += float(val_str)
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierHeadphoneAudioExposure':
+                try:
+                    headphone_exposure_daily[date_str].append(float(val_str))
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierDistanceCycling':
+                try:
+                    cycling_distance_daily[date_str] += float(val_str)
+                except: pass
+
+            elif rtype == 'HKQuantityTypeIdentifierSixMinuteWalkTestDistance':
+                try:
+                    six_min_walk.append({'date': date_str, 'value': round(float(val_str))})
                 except: pass
 
             record_count += 1
@@ -1457,6 +1524,118 @@ def main(export_dir):
         'exerciseTime': {'daily': exercise_list},
     }
 
+    # Walking metrics (monthly averages)
+    def monthly_avg(daily_dict):
+        monthly = defaultdict(list)
+        for d, vals in sorted(daily_dict.items()):
+            m = d[:7]
+            if isinstance(vals, list):
+                monthly[m].extend(vals)
+            else:
+                monthly[m].append(vals)
+        return sorted([{'month': m, 'mean': round(sum(vs)/len(vs), 2)} for m, vs in monthly.items()], key=lambda x: x['month'])
+
+    activity_data['walkingSpeed'] = {'monthly': monthly_avg(walking_speed_daily)}
+    activity_data['walkingStepLength'] = {'monthly': monthly_avg(walking_step_length_daily)}
+    activity_data['walkingAsymmetry'] = {'monthly': monthly_avg(walking_asymmetry_daily)}
+    activity_data['walkingSteadiness'] = sorted(walking_steadiness, key=lambda x: x['date'])
+
+    # Daylight
+    daylight_list = sorted([{'date': d, 'value': round(v)} for d, v in daylight_daily.items() if v > 0], key=lambda x: x['date'])
+    activity_data['daylight'] = {'daily': daylight_list, 'monthly': monthly_avg(daylight_daily)}
+
+    # Distance
+    distance_list = sorted([{'date': d, 'value': round(v, 2)} for d, v in distance_daily.items() if v > 0], key=lambda x: x['date'])
+    activity_data['distance'] = {'daily': distance_list}
+
+    # Flights
+    flights_list = sorted([{'date': d, 'value': round(v)} for d, v in flights_daily.items() if v > 0], key=lambda x: x['date'])
+    activity_data['flights'] = {'daily': flights_list}
+
+    # Basal energy
+    basal_list = sorted([{'date': d, 'value': round(v)} for d, v in basal_energy_daily.items() if v > 50], key=lambda x: x['date'])
+    activity_data['basalEnergy'] = {'daily': basal_list}
+
+    # Headphone exposure
+    headphone_monthly = defaultdict(list)
+    for d, vals in headphone_exposure_daily.items():
+        m = d[:7]
+        headphone_monthly[m].extend(vals)
+    headphone_monthly_list = sorted([{
+        'month': m, 'mean': round(sum(vs)/len(vs), 1), 'max': round(max(vs), 1),
+    } for m, vs in headphone_monthly.items()], key=lambda x: x['month'])
+    activity_data['headphoneExposure'] = {'monthly': headphone_monthly_list}
+
+    # Cycling distance
+    cycling_list = sorted([{'date': d, 'value': round(v, 2)} for d, v in cycling_distance_daily.items() if v > 0], key=lambda x: x['date'])
+    activity_data['cyclingDistance'] = {'daily': cycling_list}
+
+    # Six minute walk test
+    activity_data['sixMinWalk'] = sorted(six_min_walk, key=lambda x: x['date'])
+
+    # Parse Arboleaf body scale data if provided
+    arboleaf_data = []
+    if arboleaf_path and os.path.exists(arboleaf_path):
+        print(f"Parsing Arboleaf data: {arboleaf_path}")
+        try:
+            import openpyxl
+            wb = openpyxl.load_workbook(arboleaf_path, read_only=True)
+            ws = wb.active
+            headers = [cell.value for cell in next(ws.iter_rows(min_row=1, max_row=1))]
+            for row in ws.iter_rows(min_row=2, values_only=True):
+                entry = dict(zip(headers, row))
+                date_val = entry.get('测量时间', '')
+                if not date_val:
+                    continue
+                # Parse date: "04/10/2026 13:46:43" format
+                try:
+                    from datetime import datetime as dt_parse
+                    dt = dt_parse.strptime(str(date_val), '%m/%d/%Y %H:%M:%S')
+                    date_str = dt.strftime('%Y-%m-%d')
+                except:
+                    continue
+
+                def safe_float(v):
+                    try:
+                        f = float(v)
+                        return f if f > 0 else None
+                    except:
+                        return None
+
+                record = {'date': date_str}
+                field_map = {
+                    '体重(kg)': 'weight',
+                    '脂肪率(%)': 'bodyFat',
+                    'BMI': 'bmi',
+                    '骨骼肌率(%)': 'skeletalMuscle',
+                    '肌肉量(kg)': 'muscleMass',
+                    '蛋白质(%)': 'protein',
+                    '基础代谢量(kcal)': 'bmr',
+                    '去脂体重(kg)': 'leanMass',
+                    '皮下脂肪率(%)': 'subcutaneousFat',
+                    '内脏脂肪': 'visceralFat',
+                    '体水份(%)': 'bodyWater',
+                    '骨量(kg)': 'boneMass',
+                }
+                for cn_key, en_key in field_map.items():
+                    val = safe_float(entry.get(cn_key))
+                    if val is not None:
+                        record[en_key] = round(val, 2)
+
+                if len(record) > 1:  # has at least one metric besides date
+                    arboleaf_data.append(record)
+
+            wb.close()
+            arboleaf_data.sort(key=lambda x: x['date'])
+            print(f"  Arboleaf: {len(arboleaf_data)} body composition records")
+        except ImportError:
+            print("  WARNING: openpyxl not installed. Run: pip install openpyxl")
+        except Exception as e:
+            print(f"  WARNING: Failed to parse Arboleaf data: {e}")
+
+    if arboleaf_data:
+        activity_data['arboleaf'] = arboleaf_data
+
     with open(os.path.join(out_dir, 'activity.json'), 'w') as f:
         json.dump(activity_data, f)
     print("  activity.json done")
@@ -1631,9 +1810,14 @@ def main(export_dir):
     print(f"  health score: {len(health_score['daily'])} days, latest={health_score['latest']}")
     print(f"  longevity score: {longevity_score['score']}, {len(longevity_score['components'])} components")
     print(f"  baselines: {len(baselines)} metrics")
+    print(f"  daylight: {len(daylight_list)} days")
+    print(f"  walking metrics: speed {len(walking_speed_daily)}, step length {len(walking_step_length_daily)}, asymmetry {len(walking_asymmetry_daily)} days")
+    print(f"  headphone exposure: {len(headphone_monthly_list)} months")
 
 if __name__ == '__main__':
-    if len(sys.argv) < 2:
-        print("Usage: python3 process_data.py /path/to/apple_health_export")
-        sys.exit(1)
-    main(sys.argv[1])
+    import argparse
+    parser = argparse.ArgumentParser(description='Process Apple Health export data')
+    parser.add_argument('export_dir', help='Path to Apple Health export directory')
+    parser.add_argument('--arboleaf', help='Path to Arboleaf body scale XLSX export', default=None)
+    args = parser.parse_args()
+    main(args.export_dir, arboleaf_path=args.arboleaf)

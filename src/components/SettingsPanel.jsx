@@ -7,7 +7,7 @@
  *   <SettingsPanel visible={showSettings} onClose={() => setShowSettings(false)} t={t} />
  */
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 
 const DEFAULT_WEIGHTS = {
   rhr: 13, hrv: 18, sleep: 23, activity: 13, recovery: 13, body: 10, daylight: 10,
@@ -45,21 +45,16 @@ function saveSettings(settings) {
 
 function SettingsPanel({ visible, onClose, t }) {
   const lang = t?.('app.title') === 'HealthDash' ? 'en' : 'zh';
-  const saved = loadSettings();
 
-  const [weights, setWeights] = useState(saved?.weights ?? { ...DEFAULT_WEIGHTS });
-  const [thresholds, setThresholds] = useState(saved?.thresholds ?? { ...DEFAULT_THRESHOLDS });
+  const [weights, setWeights] = useState(() => {
+    const s = loadSettings();
+    return s?.weights ?? { ...DEFAULT_WEIGHTS };
+  });
+  const [thresholds, setThresholds] = useState(() => {
+    const s = loadSettings();
+    return s?.thresholds ?? { ...DEFAULT_THRESHOLDS };
+  });
   const [showSaved, setShowSaved] = useState(false);
-
-  useEffect(() => {
-    if (visible) {
-      const s = loadSettings();
-      if (s) {
-        setWeights(s.weights ?? { ...DEFAULT_WEIGHTS });
-        setThresholds(s.thresholds ?? { ...DEFAULT_THRESHOLDS });
-      }
-    }
-  }, [visible]);
 
   if (!visible) return null;
 

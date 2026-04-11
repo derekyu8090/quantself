@@ -19,7 +19,7 @@ function TrendAlerts({ trends, t }) {
         {t?.('trends.title') ?? 'Trend Alerts'}
       </p>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-        {trends.map((tr, i) => {
+        {trends.map((tr) => {
           const arrow = tr.direction === 'up' ? '↑' : '↓';
           const arrowColor = tr.concerning
             ? 'var(--color-red)'

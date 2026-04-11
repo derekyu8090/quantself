@@ -227,6 +227,38 @@ function StagePctTooltip({ active, payload, label }) {
 
 export default function SleepPanel({ data, t }) {
   const theme = getChartTheme();
+  const { startDate, endDate } = useDateRange();
+
+  // Breathing disturbances — monthly averages
+  const bdMonthly = useMemo(() => {
+    if (!data?.breathingDisturbances?.length) return [];
+    const groups = {};
+    for (const r of data.breathingDisturbances) {
+      const m = r.date.slice(0, 7);
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(r.value);
+    }
+    return Object.entries(groups).sort().map(([month, vals]) => ({
+      month,
+      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
+      max: Math.max(...vals),
+    }));
+  }, [data?.breathingDisturbances]);
+
+  // Wrist temperature — monthly averages
+  const tempMonthly = useMemo(() => {
+    if (!data?.wristTemperature?.length) return [];
+    const groups = {};
+    for (const r of data.wristTemperature) {
+      const m = r.date.slice(0, 7);
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(r.value);
+    }
+    return Object.entries(groups).sort().map(([month, vals]) => ({
+      month,
+      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
+    }));
+  }, [data?.wristTemperature]);
 
   // --- Loading / null guard ---
   if (!data) {
@@ -242,7 +274,6 @@ export default function SleepPanel({ data, t }) {
     );
   }
 
-  const { startDate, endDate } = useDateRange();
   const { stats, monthly = [], heatmap = [] } = data;
 
   if (!stats) {
@@ -266,37 +297,6 @@ export default function SleepPanel({ data, t }) {
     deepPct: m.avgTotal > 0 ? parseFloat(((m.avgDeep / m.avgTotal) * 100).toFixed(1)) : 0,
     remPct: m.avgTotal > 0 ? parseFloat(((m.avgREM / m.avgTotal) * 100).toFixed(1)) : 0,
   }));
-
-  // Breathing disturbances — monthly averages
-  const bdMonthly = useMemo(() => {
-    if (!data.breathingDisturbances?.length) return [];
-    const groups = {};
-    for (const r of data.breathingDisturbances) {
-      const m = r.date.slice(0, 7);
-      if (!groups[m]) groups[m] = [];
-      groups[m].push(r.value);
-    }
-    return Object.entries(groups).sort().map(([month, vals]) => ({
-      month,
-      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
-      max: Math.max(...vals),
-    }));
-  }, [data.breathingDisturbances]);
-
-  // Wrist temperature — monthly averages
-  const tempMonthly = useMemo(() => {
-    if (!data.wristTemperature?.length) return [];
-    const groups = {};
-    for (const r of data.wristTemperature) {
-      const m = r.date.slice(0, 7);
-      if (!groups[m]) groups[m] = [];
-      groups[m].push(r.value);
-    }
-    return Object.entries(groups).sort().map(([month, vals]) => ({
-      month,
-      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
-    }));
-  }, [data.wristTemperature]);
 
   // Filter by date range
   const bdMonthlyFiltered   = filterByDateRange(bdMonthly,   startDate, endDate, 'month');

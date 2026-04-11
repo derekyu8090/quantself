@@ -1,4 +1,5 @@
 #!/bin/bash
+export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 # QuantSelf Health Data Watcher
 # Monitors ~/Downloads and iCloud for new Apple Health exports
 # Auto-triggers process_data.py when detected

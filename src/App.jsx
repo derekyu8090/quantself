@@ -56,14 +56,26 @@ function App() {
 
   const toggleLang = () => setLang(l => l === 'zh' ? 'en' : 'zh')
 
-  // Data loading
+  // Data loading — use Tauri command if available, otherwise fetch
   useEffect(() => {
     let cancelled = false
     async function loadAllData() {
       try {
-        const responses = await Promise.all(Object.values(DATA_URLS).map(u => fetch(u)))
-        for (const r of responses) { if (!r.ok) throw new Error(`Failed (${r.status})`) }
-        const [cardiovascular, sleep, activity, overview, ecg] = await Promise.all(responses.map(r => r.json()))
+        let cardiovascular, sleep, activity, overview, ecg
+        if (window.__TAURI_INTERNALS__) {
+          // Running inside Tauri — read from ~/health-dashboard/public/data/
+          const { invoke } = await import('@tauri-apps/api/core')
+          const load = async (f) => JSON.parse(await invoke('read_health_data', { filename: f }))
+          ;[cardiovascular, sleep, activity, overview, ecg] = await Promise.all([
+            load('cardiovascular.json'), load('sleep.json'), load('activity.json'),
+            load('overview.json'), load('ecg.json'),
+          ])
+        } else {
+          // Running in browser — fetch from dev server
+          const responses = await Promise.all(Object.values(DATA_URLS).map(u => fetch(u)))
+          for (const r of responses) { if (!r.ok) throw new Error(`Failed (${r.status})`) }
+          ;[cardiovascular, sleep, activity, overview, ecg] = await Promise.all(responses.map(r => r.json()))
+        }
         if (!cancelled) { setData({ cardiovascular, sleep, activity, overview, ecg }); setLoading(false) }
       } catch (err) {
         if (!cancelled) { setError(err.message ?? 'Unknown error'); setLoading(false) }

@@ -4,10 +4,23 @@ use tauri::{
     Manager,
 };
 
+/// Read a JSON data file from ~/health-dashboard/public/data/
+#[tauri::command]
+fn read_health_data(filename: String) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let path = std::path::PathBuf::from(&home)
+        .join("health-dashboard")
+        .join("public")
+        .join("data")
+        .join(&filename);
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", filename, e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .invoke_handler(tauri::generate_handler![read_health_data])
         .setup(|app| {
             // Build tray menu
             let show_i = MenuItem::with_id(app, "show", "Show Dashboard", true, None::<&str>)?;

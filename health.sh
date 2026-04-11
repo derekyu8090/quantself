@@ -12,7 +12,7 @@ done
 
 # Start dev server in background
 cd "$DIR"
-npm run dev -- --port $PORT &>/dev/null &
+npm run dev -- --port $PORT --host &>/dev/null &
 DEV_PID=$!
 
 # Wait for server to be ready
@@ -24,7 +24,12 @@ for i in $(seq 1 20); do
   sleep 0.3
 done
 
+# Get local IP
+LOCAL_IP=$(ipconfig getifaddr en0 2>/dev/null || echo "unknown")
+
 # Open in default browser
 open "http://localhost:$PORT"
-echo "Dashboard running at http://localhost:$PORT (PID: $DEV_PID)"
+echo "Dashboard running (PID: $DEV_PID)"
+echo "  Local:   http://localhost:$PORT"
+echo "  Mobile:  http://$LOCAL_IP:$PORT"
 echo "Press Ctrl+C or run 'kill $DEV_PID' to stop"

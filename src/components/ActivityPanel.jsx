@@ -6,6 +6,7 @@
  * <ActivityPanel data={activityData} />
  */
 
+import { useMemo } from 'react';
 import StatCard from './StatCard';
 import CalendarHeatmap from './CalendarHeatmap';
 import AchievementBadges from './AchievementBadges';
@@ -28,6 +29,7 @@ import {
   ReferenceLine,
   ResponsiveContainer,
   Cell,
+  Legend,
 } from 'recharts';
 
 function classifyHRZone(avgHR) {
@@ -342,6 +344,293 @@ function StandHoursChart({ data }) {
   );
 }
 
+// ─── new metric sub-components ───────────────────────────────────────────────
+
+function DaylightChart({ data, targetLabel }) {
+  if (!data?.length) return <p className="chart-empty" style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  const gradientId = 'daylightGradient';
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <AreaChart data={chartData} margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="5%" stopColor="var(--color-vo2)" stopOpacity={0.4} />
+            <stop offset="50%" stopColor="var(--color-vo2)" stopOpacity={0.15} />
+            <stop offset="95%" stopColor="var(--color-vo2)" stopOpacity={0} />
+          </linearGradient>
+        </defs>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" min" />
+        <Tooltip content={<ChartTooltip unit=" min" />} />
+        <ReferenceLine
+          y={30}
+          stroke={theme.referenceLine.stroke}
+          strokeDasharray={theme.referenceLine.strokeDasharray}
+          strokeOpacity={theme.referenceLine.strokeOpacity}
+          label={{ value: targetLabel ?? '30 min', fill: 'var(--text-muted)', fontSize: 11, position: 'right' }}
+        />
+        <Area
+          type="monotone"
+          dataKey="mean"
+          stroke="var(--color-vo2)"
+          strokeWidth={2}
+          fill={`url(#${gradientId})`}
+          dot={false}
+          activeDot={theme.activeDot('var(--color-vo2)')}
+        />
+      </AreaChart>
+    </ResponsiveContainer>
+  );
+}
+
+function WalkingSpeedChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <LineChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" m/s" domain={['auto', 'auto']} />
+        <Tooltip content={<ChartTooltip unit=" m/s" />} />
+        <Line
+          type="monotone"
+          dataKey="mean"
+          stroke="var(--color-activity)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={theme.activeDot('var(--color-activity)')}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function StepLengthChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <LineChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" cm" domain={['auto', 'auto']} />
+        <Tooltip content={<ChartTooltip unit=" cm" />} />
+        <Line
+          type="monotone"
+          dataKey="mean"
+          stroke="var(--color-hrv)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={theme.activeDot('var(--color-hrv)')}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function WalkingAsymmetryChart({ data, thresholdLabel }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  return (
+    <ResponsiveContainer width="100%" height={180}>
+      <LineChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit="%" domain={[0, 'auto']} />
+        <Tooltip content={<ChartTooltip unit="%" />} />
+        <ReferenceLine
+          y={10}
+          stroke={theme.referenceLine.stroke}
+          strokeDasharray={theme.referenceLine.strokeDasharray}
+          strokeOpacity={theme.referenceLine.strokeOpacity}
+          label={{ value: thresholdLabel ?? '10%', fill: 'var(--text-muted)', fontSize: 11, position: 'right' }}
+        />
+        <Line
+          type="monotone"
+          dataKey="mean"
+          stroke="var(--color-risk)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={theme.activeDot('var(--color-risk)')}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function HeadphoneExposureChart({ data, safeLimitLabel }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean, max: d.max }));
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <BarChart data={chartData} margin={{ top: 10, right: 16, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" dB" domain={[0, 'auto']} />
+        <Tooltip
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            const t2 = getChartTheme();
+            return (
+              <div style={t2.tooltip.contentStyle}>
+                <div style={t2.tooltip.labelStyle}>{label}</div>
+                {payload.map((p, i) => (
+                  <div key={i} style={{ ...t2.tooltip.itemStyle, color: p.color || 'var(--text-primary)' }}>
+                    {p.name}: {p.value != null ? `${p.value} dB` : '--'}
+                  </div>
+                ))}
+              </div>
+            );
+          }}
+        />
+        <ReferenceLine
+          y={80}
+          stroke={theme.referenceLine.stroke}
+          strokeDasharray={theme.referenceLine.strokeDasharray}
+          strokeOpacity={theme.referenceLine.strokeOpacity}
+          label={{ value: safeLimitLabel ?? 'WHO 80 dB', fill: 'var(--text-muted)', fontSize: 11, position: 'right' }}
+        />
+        <Bar dataKey="mean" name="Mean" fill="var(--color-sleep)" radius={[4, 4, 0, 0]} maxBarSize={28} />
+        <Bar dataKey="max" name="Max" fill="var(--color-sleep)" fillOpacity={0.35} radius={[4, 4, 0, 0]} maxBarSize={28} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function BodyCompositionTrendChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const step = Math.max(1, Math.floor(data.length / 60));
+  const chartData = data
+    .filter((_, i) => i % step === 0 || i === data.length - 1)
+    .map((d) => ({ name: formatDate(d.date), bodyFat: d.bodyFat, skeletalMuscle: d.skeletalMuscle, bodyWater: d.bodyWater }));
+  return (
+    <ResponsiveContainer width="100%" height={220}>
+      <LineChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} interval="preserveStartEnd" />
+        <YAxis {...theme.yAxis} unit="%" domain={['auto', 'auto']} />
+        <Tooltip
+          content={({ active, payload, label }) => {
+            if (!active || !payload?.length) return null;
+            const t2 = getChartTheme();
+            return (
+              <div style={t2.tooltip.contentStyle}>
+                <div style={t2.tooltip.labelStyle}>{label}</div>
+                {payload.map((p, i) => (
+                  <div key={i} style={{ ...t2.tooltip.itemStyle, color: p.color }}>
+                    {p.name}: {p.value != null ? `${p.value}%` : '--'}
+                  </div>
+                ))}
+              </div>
+            );
+          }}
+        />
+        <Legend
+          formatter={(value) => {
+            const map = { bodyFat: 'Body Fat', skeletalMuscle: 'Skeletal Muscle', bodyWater: 'Body Water' };
+            return <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{map[value] ?? value}</span>;
+          }}
+        />
+        <Line type="monotone" dataKey="bodyFat" name="bodyFat" stroke="var(--color-heart)" strokeWidth={2} dot={false} activeDot={theme.activeDot('var(--color-heart)')} />
+        <Line type="monotone" dataKey="skeletalMuscle" name="skeletalMuscle" stroke="var(--color-activity)" strokeWidth={2} dot={false} activeDot={theme.activeDot('var(--color-activity)')} />
+        <Line type="monotone" dataKey="bodyWater" name="bodyWater" stroke="var(--color-hrv)" strokeWidth={2} dot={false} activeDot={theme.activeDot('var(--color-hrv)')} />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
+function ArboleafLatestCard({ record, t }) {
+  if (!record) return null;
+  const labels = t?.('activity.arboleafLabels') ?? {};
+  const items = [
+    { key: 'weight',         value: record.weight,         unit: 'kg' },
+    { key: 'bodyFat',        value: record.bodyFat,        unit: '%' },
+    { key: 'bmi',            value: record.bmi,            unit: '' },
+    { key: 'skeletalMuscle', value: record.skeletalMuscle, unit: '%' },
+    { key: 'muscleMass',     value: record.muscleMass,     unit: 'kg' },
+    { key: 'protein',        value: record.protein,        unit: '%' },
+    { key: 'bmr',            value: record.bmr,            unit: 'kcal' },
+    { key: 'leanMass',       value: record.leanMass,       unit: 'kg' },
+    { key: 'subcutaneousFat',value: record.subcutaneousFat,unit: '%' },
+    { key: 'visceralFat',    value: record.visceralFat,    unit: '' },
+    { key: 'bodyWater',      value: record.bodyWater,      unit: '%' },
+    { key: 'boneMass',       value: record.boneMass,       unit: 'kg' },
+  ];
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '8px' }}>
+      {items.map(({ key, value, unit }) => (
+        <div
+          key={key}
+          style={{
+            background: 'var(--bg-inset)',
+            borderRadius: 'var(--radius)',
+            padding: '10px 12px',
+            border: '1px solid var(--border)',
+          }}
+        >
+          <div style={{ color: 'var(--text-muted)', fontSize: '10px', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4 }}>
+            {labels[key] ?? key}
+          </div>
+          <div style={{ color: 'var(--text-heading)', fontSize: '18px', fontWeight: 700, lineHeight: 1 }}>
+            {value ?? '--'}
+            {unit && <span style={{ fontSize: '11px', color: 'var(--text-muted)', fontWeight: 400, marginLeft: 3 }}>{unit}</span>}
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function FlightsMonthlyChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <BarChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} />
+        <Tooltip content={<ChartTooltip unit=" 层" />} />
+        <Bar dataKey="mean" fill="var(--color-hrv)" radius={[4, 4, 0, 0]} maxBarSize={30} />
+      </BarChart>
+    </ResponsiveContainer>
+  );
+}
+
+function BasalEnergyMonthlyChart({ data }) {
+  if (!data?.length) return <p style={{ color: 'var(--text-muted)', fontSize: '14px', textAlign: 'center', padding: '40px 0' }}>暂无数据</p>;
+  const theme = getChartTheme();
+  const chartData = data.map((d) => ({ name: formatMonth(d.month), mean: d.mean }));
+  return (
+    <ResponsiveContainer width="100%" height={200}>
+      <LineChart data={chartData} margin={{ top: 10, right: 8, left: -10, bottom: 0 }}>
+        <CartesianGrid {...theme.grid} />
+        <XAxis dataKey="name" {...theme.xAxis} />
+        <YAxis {...theme.yAxis} unit=" kcal" domain={['auto', 'auto']} />
+        <Tooltip content={<ChartTooltip unit=" kcal" />} />
+        <Line
+          type="monotone"
+          dataKey="mean"
+          stroke="var(--color-risk)"
+          strokeWidth={2}
+          dot={false}
+          activeDot={theme.activeDot('var(--color-risk)')}
+        />
+      </LineChart>
+    </ResponsiveContainer>
+  );
+}
+
 // ─── main component ───────────────────────────────────────────────────────────
 
 function ActivityPanel({ data, t }) {
@@ -389,6 +678,87 @@ function ActivityPanel({ data, t }) {
     mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10,
   }));
   const standMonthlyFiltered = filterByDateRange(standMonthly, startDate, endDate, 'month');
+
+  // ── New metrics: monthly groupings ──────────────────────────────────────────
+
+  const daylightMonthlyFiltered = useMemo(
+    () => filterByDateRange(data?.daylight?.monthly, startDate, endDate, 'month'),
+    [data?.daylight?.monthly, startDate, endDate]
+  );
+
+  const walkingSpeedFiltered = useMemo(
+    () => filterByDateRange(data?.walkingSpeed?.monthly, startDate, endDate, 'month'),
+    [data?.walkingSpeed?.monthly, startDate, endDate]
+  );
+
+  const walkingStepLengthFiltered = useMemo(
+    () => filterByDateRange(data?.walkingStepLength?.monthly, startDate, endDate, 'month'),
+    [data?.walkingStepLength?.monthly, startDate, endDate]
+  );
+
+  const walkingAsymmetryFiltered = useMemo(
+    () => filterByDateRange(data?.walkingAsymmetry?.monthly, startDate, endDate, 'month'),
+    [data?.walkingAsymmetry?.monthly, startDate, endDate]
+  );
+
+  const headphoneFiltered = useMemo(
+    () => filterByDateRange(data?.headphoneExposure?.monthly, startDate, endDate, 'month'),
+    [data?.headphoneExposure?.monthly, startDate, endDate]
+  );
+
+  // Flights climbed: group daily -> monthly, then filter
+  const flightsMonthly = useMemo(() => {
+    if (!data?.flights?.daily?.length) return [];
+    const groups = {};
+    for (const r of data.flights.daily) {
+      const m = r.date?.slice(0, 7);
+      if (!m) continue;
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(r.value);
+    }
+    return Object.entries(groups).sort().map(([month, vals]) => ({
+      month,
+      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10,
+    }));
+  }, [data?.flights?.daily]);
+
+  const flightsMonthlyFiltered = useMemo(
+    () => filterByDateRange(flightsMonthly, startDate, endDate, 'month'),
+    [flightsMonthly, startDate, endDate]
+  );
+
+  // Basal energy: group daily -> monthly, then filter
+  const basalEnergyMonthly = useMemo(() => {
+    if (!data?.basalEnergy?.daily?.length) return [];
+    const groups = {};
+    for (const r of data.basalEnergy.daily) {
+      const m = r.date?.slice(0, 7);
+      if (!m) continue;
+      if (!groups[m]) groups[m] = [];
+      groups[m].push(r.value);
+    }
+    return Object.entries(groups).sort().map(([month, vals]) => ({
+      month,
+      mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10,
+    }));
+  }, [data?.basalEnergy?.daily]);
+
+  const basalEnergyMonthlyFiltered = useMemo(
+    () => filterByDateRange(basalEnergyMonthly, startDate, endDate, 'month'),
+    [basalEnergyMonthly, startDate, endDate]
+  );
+
+  // Arboleaf — latest record (most recent by date)
+  const latestArboleaf = useMemo(() => {
+    if (!data?.arboleaf?.length) return null;
+    return [...data.arboleaf].sort((a, b) => (a.date > b.date ? 1 : -1)).at(-1);
+  }, [data?.arboleaf]);
+
+  // Arboleaf filtered for trend chart
+  const arboleafFiltered = useMemo(
+    () => filterByDateRange(data?.arboleaf, startDate, endDate),
+    [data?.arboleaf, startDate, endDate]
+  );
 
   if (!data) {
     return (
@@ -515,6 +885,104 @@ function ActivityPanel({ data, t }) {
             <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>{t?.('activity.swimHRZone') ?? '心率区间分布'}</p>
             <SwimHRZoneChart swimWorkouts={swimWorkoutsFiltered} />
           </div>
+        </div>
+      </div>
+
+      {/* ── Section 1: Daylight Exposure ── */}
+      <div className="chart-card">
+        <div className="chart-card-header">
+          <div>
+            <div className="chart-card-title">{t?.('activity.daylight') ?? 'Daily Sunlight Exposure'}</div>
+            <div className="chart-card-sub">{t?.('activity.daylightSub') ?? 'Monthly average (minutes)'}</div>
+          </div>
+        </div>
+        <DaylightChart
+          data={daylightMonthlyFiltered}
+          targetLabel={t?.('activity.daylightTarget') ?? 'Min circadian benefit'}
+        />
+      </div>
+
+      {/* ── Section 2: Mobility Analysis (3-column) ── */}
+      <div className="card">
+        <p className="section-title" style={{ marginBottom: '16px' }}>{t?.('activity.mobility') ?? 'Mobility Analysis'}</p>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '16px' }}>
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+              {t?.('activity.walkingSpeed') ?? 'Walking Speed'}
+            </p>
+            <WalkingSpeedChart data={walkingSpeedFiltered} />
+          </div>
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+              {t?.('activity.stepLength') ?? 'Step Length'}
+            </p>
+            <StepLengthChart data={walkingStepLengthFiltered} />
+          </div>
+          <div>
+            <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+              {t?.('activity.asymmetry') ?? 'Asymmetry'}
+            </p>
+            <WalkingAsymmetryChart
+              data={walkingAsymmetryFiltered}
+              thresholdLabel="10%"
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* ── Section 3: Headphone Audio Exposure ── */}
+      <div className="chart-card">
+        <div className="chart-card-header">
+          <div>
+            <div className="chart-card-title">{t?.('activity.headphone') ?? 'Headphone Audio Exposure'}</div>
+            <div className="chart-card-sub">{t?.('activity.headphoneSub') ?? 'Monthly average and peak (dB)'}</div>
+          </div>
+        </div>
+        <HeadphoneExposureChart
+          data={headphoneFiltered}
+          safeLimitLabel={`${t?.('activity.safeLimit') ?? 'WHO Safe Limit'} 80 dB`}
+        />
+      </div>
+
+      {/* ── Section 4: Arboleaf Body Composition ── */}
+      {data?.arboleaf?.length > 0 && (
+        <div className="card">
+          <p className="section-title" style={{ marginBottom: '16px' }}>{t?.('activity.bodyComp') ?? 'Body Composition'}</p>
+          <div className="two-col">
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                {t?.('activity.bodyCompTrend') ?? 'Trends'}
+              </p>
+              <BodyCompositionTrendChart data={arboleafFiltered} />
+            </div>
+            <div>
+              <p style={{ fontSize: '12px', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: '12px' }}>
+                {t?.('activity.bodyCompLatest') ?? 'Latest Measurement'}
+                {latestArboleaf?.date && (
+                  <span style={{ fontWeight: 400, marginLeft: 8, textTransform: 'none', letterSpacing: 0 }}>
+                    {formatDate(latestArboleaf.date)}
+                  </span>
+                )}
+              </p>
+              <ArboleafLatestCard record={latestArboleaf} t={t} />
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Section 5: Additional Metrics — Flights + Basal Metabolic Rate ── */}
+      <div className="two-col">
+        <div className="chart-card">
+          <div className="chart-card-header">
+            <div className="chart-card-title">{t?.('activity.flightsClimbed') ?? 'Flights Climbed'}</div>
+          </div>
+          <FlightsMonthlyChart data={flightsMonthlyFiltered} />
+        </div>
+        <div className="chart-card">
+          <div className="chart-card-header">
+            <div className="chart-card-title">{t?.('activity.basalMetabolic') ?? 'Basal Metabolic Rate'}</div>
+          </div>
+          <BasalEnergyMonthlyChart data={basalEnergyMonthlyFiltered} />
         </div>
       </div>
 

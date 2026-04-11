@@ -216,15 +216,33 @@ function TrendIndicator({ trend, t }) {
 
 // ─── HealthScoreCard ──────────────────────────────────────────────────────────
 
+function scoreColor(s) {
+  return s >= 80 ? 'var(--color-green)' : s >= 60 ? 'var(--color-amber)' : 'var(--color-red)';
+}
+
 function HealthScoreCard({ data, t }) {
   if (!data) return null;
 
-  const { latest, mean, trend, breakdown, daily } = data;
+  const { mean, trend, daily } = data;
 
-  // Last 30 days of sparkline data
-  const sparklineData = Array.isArray(daily) ? daily.slice(-30) : [];
+  // Use the last COMPLETE day (not today) as the displayed score.
+  // Today's data is incomplete (especially early morning) and misleading.
+  const today = new Date().toISOString().slice(0, 10);
+  const completeDays = Array.isArray(daily)
+    ? daily.filter(d => d.date < today)
+    : [];
+  const latestComplete = completeDays.length > 0 ? completeDays[completeDays.length - 1] : null;
 
-  const score = latest ?? 0;
+  const score = latestComplete?.score ?? data.latest ?? 0;
+  const breakdown = latestComplete || data.breakdown
+    ? { rhr: 0, hrv: 0, sleep: 0, activity: 0, recovery: 0, body: 0, ...(latestComplete ?? {}), ...(latestComplete ? {} : data.breakdown ?? {}) }
+    : null;
+
+  // Recent 14 days (complete days only)
+  const recent14 = completeDays.slice(-14);
+
+  // Last 30 days of sparkline data (complete days only)
+  const sparklineData = completeDays.slice(-30);
 
   // Determine gradient color id based on score
   const gradientId = 'health-score-gradient';
@@ -349,6 +367,37 @@ function HealthScoreCard({ data, t }) {
                 />
               </AreaChart>
             </ResponsiveContainer>
+          </div>
+        </div>
+      )}
+
+      {/* Recent 14 days daily scores */}
+      {recent14.length > 0 && (
+        <div style={{ marginTop: '16px' }}>
+          <div style={{
+            fontSize: '11px', color: 'var(--text-muted)', marginBottom: '8px',
+            fontWeight: '500', textTransform: 'uppercase', letterSpacing: '0.5px',
+          }}>
+            {t?.('healthScore.recent14') ?? 'Recent 14 Days'}
+          </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+            {[...recent14].reverse().map(day => {
+              const dayColor = scoreColor(day.score);
+              const dateLabel = day.date.slice(5); // MM-DD
+              return (
+                <div key={day.date} style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '11px', color: 'var(--text-muted)', width: '42px', flexShrink: 0, fontVariantNumeric: 'tabular-nums' }}>
+                    {dateLabel}
+                  </span>
+                  <div style={{ flex: 1, height: '6px', background: 'var(--bg-inset)', borderRadius: '3px', overflow: 'hidden' }}>
+                    <div style={{ height: '100%', width: `${day.score}%`, background: dayColor, borderRadius: '3px', transition: 'width 0.6s ease' }} />
+                  </div>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: dayColor, width: '24px', textAlign: 'right', fontVariantNumeric: 'tabular-nums' }}>
+                    {day.score}
+                  </span>
+                </div>
+              );
+            })}
           </div>
         </div>
       )}

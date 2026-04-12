@@ -83,6 +83,36 @@ class ChatHandler(BaseHTTPRequestHandler):
         self._cors_headers()
         self.end_headers()
 
+    def do_GET(self):
+        if self.path == '/api/health':
+            self._json_response({'status': 'ok', 'provider': CONFIG.get('llm', {}).get('provider', 'claude')})
+            return
+        # Root path — show a simple status page
+        html = f"""<!DOCTYPE html>
+<html><head><title>QuantSelf Chat Server</title>
+<style>
+body{{font-family:-apple-system,system-ui,sans-serif;max-width:600px;margin:60px auto;padding:20px;color:#2c3e50}}
+h1{{color:#3498db;margin-bottom:8px}}
+.status{{display:inline-block;padding:4px 12px;background:#2ecc71;color:#fff;border-radius:12px;font-size:12px;font-weight:600}}
+code{{background:#ecf0f1;padding:2px 8px;border-radius:4px;font-size:13px}}
+.note{{background:#fff9c4;padding:12px 16px;border-left:3px solid #f39c12;margin-top:20px;border-radius:4px;font-size:13px}}
+</style></head><body>
+<h1>QuantSelf Chat Server</h1>
+<p><span class="status">RUNNING</span></p>
+<p>LLM provider: <code>{CONFIG.get('llm', {}).get('provider', 'claude')}</code></p>
+<p>Endpoint: <code>POST /api/chat</code></p>
+<p>Health check: <code>GET /api/health</code></p>
+<div class="note">
+  This is a backend API server, not a chat UI.
+  Open the dashboard and click the chat bubble at the bottom right to talk to your health data.
+</div>
+</body></html>"""
+        self.send_response(200)
+        self._cors_headers()
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
+        self.end_headers()
+        self.wfile.write(html.encode())
+
     def do_POST(self):
         if self.path != '/api/chat':
             self.send_error(404)

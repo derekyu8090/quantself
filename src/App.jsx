@@ -327,7 +327,6 @@ function App() {
               {activeTab === 'correlation' && (
                 <ErrorBoundary name="Insights">
                   <CorrelationPanel data={data.overview?.correlations} t={t} />
-                  <ChatPanel t={t} />
                 </ErrorBoundary>
               )}
             </div>
@@ -345,6 +344,7 @@ function App() {
       </main>
 
       <SettingsPanel visible={showSettings} onClose={() => setShowSettings(false)} t={t} />
+      {!loading && !error && <ChatPanel t={t} />}
     </div>
     </DateRangeProvider>
   )

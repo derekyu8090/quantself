@@ -44,7 +44,7 @@
     "provider": "claude",
     "providers": {
       "claude": {
-        "model": "claude-sonnet-4-20250514",
+        "model": "claude-sonnet-4-6",
         "apiUrl": "https://api.anthropic.com/v1/messages",
         "envKey": "ANTHROPIC_API_KEY"
       },

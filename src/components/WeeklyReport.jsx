@@ -136,7 +136,7 @@ function WeeklyReport({ data, t }) {
                 paddingTop: '8px',
               }}
             >
-              {t?.('weeklyReport.generated') ?? 'Generated'}: {data.generatedAt} | Claude Sonnet 4
+              {t?.('weeklyReport.generated') ?? 'Generated'}: {data.generatedAt} | Claude Sonnet 4.6
             </div>
           )}
         </div>

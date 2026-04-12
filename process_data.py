@@ -1178,7 +1178,7 @@ def call_llm(prompt, config=None):
     providers = cfg.get('providers', {})
     pcfg = providers.get(provider, {})
 
-    model = pcfg.get('model', 'claude-sonnet-4-20250514')
+    model = pcfg.get('model', 'claude-sonnet-4-6')
     api_url = pcfg.get('apiUrl', 'https://api.anthropic.com/v1/messages')
     env_key = pcfg.get('envKey', 'ANTHROPIC_API_KEY')
     api_key = os.environ.get(env_key, '') if env_key else ''

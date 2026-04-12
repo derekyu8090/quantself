@@ -16,6 +16,7 @@ import WeeklyReport from './components/WeeklyReport'
 import ErrorBoundary from './components/ErrorBoundary'
 import TrendAlerts from './components/TrendAlerts'
 import SettingsPanel from './components/SettingsPanel'
+import ProfileSelector from './components/ProfileSelector'
 import { DateRangeProvider } from './contexts/DateRangeContext'
 import { useTranslation } from './i18n'
 import './App.css'
@@ -24,19 +25,29 @@ import './print.css'
 const TAB_IDS = ['cardiovascular', 'sleep', 'activity', 'risk', 'compare', 'ecg', 'correlation', 'glossary']
 const TAB_ICONS = { cardiovascular: '♥', sleep: '☾', activity: '⚡', risk: '◉', compare: '⇔', ecg: '♡', correlation: '~', glossary: '?' }
 
-const DATA_URLS = {
-  cardiovascular: '/data/cardiovascular.json',
-  sleep:          '/data/sleep.json',
-  activity:       '/data/activity.json',
-  overview:       '/data/overview.json',
-  ecg:            '/data/ecg.json',
-}
+const DATA_FILES = ['cardiovascular', 'sleep', 'activity', 'overview', 'ecg']
+
+// Share mode: hide profile selector, chat, settings when the app is deployed
+// for public viewing. Enabled via window.__QUANTSELF_SHARE_MODE__ set in index.html
+// or via URL param ?share=1. Stays true for the whole session.
+const SHARE_MODE = typeof window !== 'undefined' && (
+  window.__QUANTSELF_SHARE_MODE__ === true ||
+  new URLSearchParams(window.location.search).get('share') === '1'
+)
 
 function App() {
   const [activeTab, setActiveTab] = useState('cardiovascular')
   const [data, setData] = useState({ cardiovascular: null, sleep: null, activity: null, overview: null, ecg: null })
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState(null)
+
+  // Profile registry + active profile
+  const [profileRegistry, setProfileRegistry] = useState(null)  // { profiles: [], active: '' }
+  const [activeProfile, setActiveProfile] = useState(() => {
+    if (SHARE_MODE) return null  // will be set from registry.active
+    return localStorage.getItem('quantself-active-profile') || 'default'
+  })
+  const [reloadTrigger, setReloadTrigger] = useState(0)
 
   // Theme
   const [theme, setTheme] = useState(() => {
@@ -62,37 +73,112 @@ function App() {
 
   const toggleLang = () => setLang(l => l === 'zh' ? 'en' : 'zh')
 
+  // Load profile registry once
+  useEffect(() => {
+    async function loadRegistry() {
+      try {
+        let registry
+        // Inlined registry (standalone HTML build) takes priority
+        if (window.__QUANTSELF_REGISTRY__) {
+          registry = window.__QUANTSELF_REGISTRY__
+        } else if (window.__TAURI_INTERNALS__) {
+          const { invoke } = await import('@tauri-apps/api/core')
+          registry = JSON.parse(await invoke('read_health_data', { filename: 'profiles.json', profile: null }))
+        } else {
+          const r = await fetch('/data/profiles.json')
+          if (!r.ok) {
+            setProfileRegistry({ profiles: [{ name: 'default', label: 'Me' }], active: 'default' })
+            return
+          }
+          registry = await r.json()
+        }
+        setProfileRegistry(registry)
+        const names = registry.profiles.map(p => p.name)
+        if (SHARE_MODE) {
+          // Always use registry.active in share mode — ignore localStorage
+          setActiveProfile(registry.active || names[0] || 'default')
+        } else if (!names.includes(activeProfile)) {
+          setActiveProfile(registry.active || names[0] || 'default')
+        }
+      } catch {
+        setProfileRegistry({ profiles: [{ name: 'default', label: 'Me' }], active: 'default' })
+      }
+    }
+    loadRegistry()
+  }, [reloadTrigger]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Persist active profile
+  useEffect(() => {
+    localStorage.setItem('quantself-active-profile', activeProfile)
+  }, [activeProfile])
+
   // Data loading — use Tauri command if available, otherwise fetch
   useEffect(() => {
+    if (!activeProfile) return  // wait for registry to set it
     let cancelled = false
+    setLoading(true)
+    setError(null)
     async function loadAllData() {
       try {
-        let cardiovascular, sleep, activity, overview, ecg
-        if (window.__TAURI_INTERNALS__) {
-          // Running inside Tauri — read from ~/health-dashboard/public/data/
+        let results
+        // Inlined data (standalone HTML build) takes priority
+        if (window.__QUANTSELF_DATA__) {
+          const d = window.__QUANTSELF_DATA__
+          results = DATA_FILES.map(f => d[f])
+        } else if (window.__TAURI_INTERNALS__) {
           const { invoke } = await import('@tauri-apps/api/core')
-          const load = async (f) => JSON.parse(await invoke('read_health_data', { filename: f }))
-          ;[cardiovascular, sleep, activity, overview, ecg] = await Promise.all([
-            load('cardiovascular.json'), load('sleep.json'), load('activity.json'),
-            load('overview.json'), load('ecg.json'),
-          ])
+          const load = async (f) => JSON.parse(await invoke('read_health_data', {
+            filename: f + '.json',
+            profile: activeProfile,
+          }))
+          results = await Promise.all(DATA_FILES.map(load))
         } else {
-          // Running in browser — fetch from dev server
-          const responses = await Promise.all(Object.values(DATA_URLS).map(u => fetch(u)))
+          const urls = DATA_FILES.map(f => `/data/profiles/${activeProfile}/${f}.json`)
+          const responses = await Promise.all(urls.map(u => fetch(u)))
           for (const r of responses) { if (!r.ok) throw new Error(`Failed (${r.status})`) }
-          ;[cardiovascular, sleep, activity, overview, ecg] = await Promise.all(responses.map(r => r.json()))
+          results = await Promise.all(responses.map(r => r.json()))
         }
-        if (!cancelled) { setData({ cardiovascular, sleep, activity, overview, ecg }); setLoading(false) }
+        if (!cancelled) {
+          const [cardiovascular, sleep, activity, overview, ecg] = results
+          setData({ cardiovascular, sleep, activity, overview, ecg })
+          setLoading(false)
+        }
       } catch (err) {
         if (!cancelled) { setError(err.message ?? 'Unknown error'); setLoading(false) }
       }
     }
     loadAllData()
     return () => { cancelled = true }
-  }, [])
+  }, [activeProfile, reloadTrigger])
 
   // Settings modal
   const [showSettings, setShowSettings] = useState(false)
+
+  // Profile deletion
+  const handleDeleteProfile = async (profileName) => {
+    try {
+      if (window.__TAURI_INTERNALS__) {
+        const { invoke } = await import('@tauri-apps/api/core')
+        await invoke('delete_profile', { profile: profileName })
+      } else {
+        // Web: call a small server endpoint or instruct user
+        // For dev, we'll use the chat server's existing HTTP infrastructure
+        const res = await fetch(`http://localhost:5180/api/profile/${profileName}`, { method: 'DELETE' })
+        if (!res.ok) {
+          const msg = await res.text().catch(() => 'Delete failed')
+          throw new Error(msg || `HTTP ${res.status}`)
+        }
+      }
+      // If we deleted the active profile, switch to default
+      if (activeProfile === profileName) {
+        setActiveProfile('default')
+      }
+      // Reload registry
+      setReloadTrigger(n => n + 1)
+    } catch (err) {
+      alert(`Failed to delete profile: ${err.message}`)
+    }
+  }
 
   // CSV export handler
   const handleExportCSV = () => {
@@ -164,6 +250,17 @@ function App() {
           <DateRangePicker lang={lang} />
 
           <div className="header-meta">
+            {/* Profile selector (hidden in share mode) */}
+            {!SHARE_MODE && (
+              <ProfileSelector
+                registry={profileRegistry}
+                active={activeProfile}
+                onChange={setActiveProfile}
+                onDelete={handleDeleteProfile}
+                t={t}
+              />
+            )}
+
             {/* Export PDF */}
             <button className="export-btn print-hide" onClick={() => window.print()}>
               {t?.('app.export') ?? 'Export PDF'}
@@ -174,10 +271,12 @@ function App() {
               {t?.('app.exportCSV') ?? 'Export CSV'}
             </button>
 
-            {/* Settings */}
-            <button className="export-btn print-hide" onClick={() => setShowSettings(true)}>
-              {t?.('settings.title') ?? 'Settings'}
-            </button>
+            {/* Settings (hidden in share mode) */}
+            {!SHARE_MODE && (
+              <button className="export-btn print-hide" onClick={() => setShowSettings(true)}>
+                {t?.('settings.title') ?? 'Settings'}
+              </button>
+            )}
 
             {/* Language toggle */}
             <button className="lang-toggle" onClick={toggleLang} aria-label="Switch language">
@@ -343,8 +442,10 @@ function App() {
         )}
       </main>
 
-      <SettingsPanel visible={showSettings} onClose={() => setShowSettings(false)} t={t} />
-      {!loading && !error && <ChatPanel t={t} />}
+      {!SHARE_MODE && (
+        <SettingsPanel visible={showSettings} onClose={() => setShowSettings(false)} t={t} />
+      )}
+      {!SHARE_MODE && !loading && !error && <ChatPanel t={t} />}
     </div>
     </DateRangeProvider>
   )

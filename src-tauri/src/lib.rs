@@ -5,22 +5,46 @@ use tauri::{
 };
 
 /// Read a JSON data file from ~/health-dashboard/public/data/
+/// Optional `profile` parameter routes to public/data/profiles/<profile>/<filename>
 #[tauri::command]
-fn read_health_data(filename: String) -> Result<String, String> {
+fn read_health_data(filename: String, profile: Option<String>) -> Result<String, String> {
+    let home = std::env::var("HOME").map_err(|e| e.to_string())?;
+    let mut path = std::path::PathBuf::from(&home)
+        .join("health-dashboard")
+        .join("public")
+        .join("data");
+    if let Some(p) = profile {
+        path = path.join("profiles").join(&p);
+    }
+    path = path.join(&filename);
+    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", filename, e))
+}
+
+/// Delete a profile directory under public/data/profiles/<profile>/
+#[tauri::command]
+fn delete_profile(profile: String) -> Result<(), String> {
+    if profile == "default" {
+        return Err("Cannot delete the default profile".to_string());
+    }
     let home = std::env::var("HOME").map_err(|e| e.to_string())?;
     let path = std::path::PathBuf::from(&home)
         .join("health-dashboard")
         .join("public")
         .join("data")
-        .join(&filename);
-    std::fs::read_to_string(&path).map_err(|e| format!("Failed to read {}: {}", filename, e))
+        .join("profiles")
+        .join(&profile);
+    if path.exists() {
+        std::fs::remove_dir_all(&path)
+            .map_err(|e| format!("Failed to delete profile {}: {}", profile, e))?;
+    }
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
-        .invoke_handler(tauri::generate_handler![read_health_data])
+        .invoke_handler(tauri::generate_handler![read_health_data, delete_profile])
         .setup(|app| {
             // Build tray menu
             let show_i = MenuItem::with_id(app, "show", "Show Dashboard", true, None::<&str>)?;

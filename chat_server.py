@@ -20,11 +20,27 @@ from process_data import call_llm, CONFIG
 DATA_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
 
 
+def get_active_profile():
+    """Read active profile from profiles.json, fallback to 'default'."""
+    reg_path = os.path.join(DATA_DIR, 'profiles.json')
+    if os.path.exists(reg_path):
+        try:
+            with open(reg_path) as f:
+                return json.load(f).get('active', 'default')
+        except Exception:
+            pass
+    return 'default'
+
+
 def load_health_context():
-    """Load a compact summary of health data for LLM context."""
-    ctx = {}
+    """Load a compact summary of health data for LLM context (from active profile)."""
+    profile = get_active_profile()
+    profile_dir = os.path.join(DATA_DIR, 'profiles', profile)
+    ctx = {'_profile': profile}
     for fname in ['overview.json', 'cardiovascular.json', 'sleep.json', 'activity.json']:
-        fpath = os.path.join(DATA_DIR, fname)
+        fpath = os.path.join(profile_dir, fname)
+        if not os.path.exists(fpath):
+            fpath = os.path.join(DATA_DIR, fname)  # legacy fallback
         if os.path.exists(fpath):
             with open(fpath) as f:
                 data = json.load(f)
@@ -83,6 +99,36 @@ class ChatHandler(BaseHTTPRequestHandler):
         self._cors_headers()
         self.end_headers()
 
+    def do_DELETE(self):
+        # Delete a profile directory
+        if self.path.startswith('/api/profile/'):
+            profile = self.path[len('/api/profile/'):]
+            if profile == 'default':
+                self._json_response({'error': 'Cannot delete default profile'}, 403)
+                return
+            profile_dir = os.path.join(DATA_DIR, 'profiles', profile)
+            registry_path = os.path.join(DATA_DIR, 'profiles.json')
+            try:
+                if os.path.isdir(profile_dir):
+                    import shutil
+                    shutil.rmtree(profile_dir)
+                # Update registry
+                if os.path.exists(registry_path):
+                    with open(registry_path) as f:
+                        registry = json.load(f)
+                    registry['profiles'] = [p for p in registry.get('profiles', []) if p.get('name') != profile]
+                    if registry.get('active') == profile:
+                        registry['active'] = 'default'
+                    with open(registry_path, 'w') as f:
+                        json.dump(registry, f, indent=2)
+                # Clear cached health context so next chat reloads
+                ChatHandler.health_context = None
+                self._json_response({'status': 'deleted', 'profile': profile})
+            except Exception as e:
+                self._json_response({'error': str(e)}, 500)
+            return
+        self.send_error(404)
+
     def do_GET(self):
         if self.path == '/api/health':
             self._json_response({'status': 'ok', 'provider': CONFIG.get('llm', {}).get('provider', 'claude')})
@@ -126,9 +172,8 @@ code{{background:#ecf0f1;padding:2px 8px;border-radius:4px;font-size:13px}}
             self._json_response({'error': 'Empty message'}, 400)
             return
 
-        # Lazy-load context
-        if ChatHandler.health_context is None:
-            ChatHandler.health_context = load_health_context()
+        # Reload context each request — profile may have changed
+        ChatHandler.health_context = load_health_context()
 
         ctx_str = json.dumps(ChatHandler.health_context, ensure_ascii=False, indent=1)
         full_prompt = SYSTEM_PROMPT.format(context=ctx_str) + '\n\nUser question: ' + question

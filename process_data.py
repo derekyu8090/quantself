@@ -1509,7 +1509,7 @@ def compute_trends(rhr_daily, hrv_daily_map, nightly_list, steps_daily, config=N
     return trends
 
 
-def main(export_dir, arboleaf_path=None):
+def main(export_dir, arboleaf_path=None, profile='default'):
     import zipfile as _zipfile
     import tempfile as _tempfile
 
@@ -1531,8 +1531,10 @@ def main(export_dir, arboleaf_path=None):
         print(f"  Extracted to: {export_dir}")
 
     xml_path = os.path.join(export_dir, 'export.xml')
-    out_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
+    base_data_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'public', 'data')
+    out_dir = os.path.join(base_data_dir, 'profiles', profile)
     os.makedirs(out_dir, exist_ok=True)
+    print(f"Writing to profile: {profile} ({out_dir})")
 
     # Verify XML export completeness
     if not os.path.exists(xml_path):
@@ -2504,6 +2506,38 @@ def main(export_dir, arboleaf_path=None):
         json.dump(ecg_data, f)
     print(f"  ecg.json done ({len(ecg_records)} recordings)")
 
+    # Update profile registry
+    registry_path = os.path.join(base_data_dir, 'profiles.json')
+    if os.path.exists(registry_path):
+        with open(registry_path) as f:
+            registry = json.load(f)
+    else:
+        registry = {'profiles': [], 'active': profile}
+
+    # Remove any existing entry for this profile
+    registry['profiles'] = [p for p in registry.get('profiles', []) if p.get('name') != profile]
+
+    # Add updated entry
+    registry['profiles'].append({
+        'name': profile,
+        'label': profile.replace('_', ' ').title(),
+        'age': age,
+        'sex': 'male' if 'Male' in user_info.get('sex', '') else 'female',
+        'dataRange': {
+            'start': rhr_list[0]['date'] if rhr_list else '',
+            'end': rhr_list[-1]['date'] if rhr_list else '',
+        },
+        'totalNights': len(nightly_list),
+        'lastUpdated': datetime.now().strftime('%Y-%m-%d %H:%M'),
+    })
+
+    # If no active profile set or current one was just written, make this active
+    if not registry.get('active') or registry.get('active') == profile:
+        registry['active'] = profile
+
+    with open(registry_path, 'w') as f:
+        json.dump(registry, f, indent=2)
+
     # Clean up temp dir from ZIP extraction
     if _temp_dir and os.path.exists(_temp_dir):
         import shutil
@@ -2530,7 +2564,8 @@ def main(export_dir, arboleaf_path=None):
 if __name__ == '__main__':
     import argparse
     parser = argparse.ArgumentParser(description='Process Apple Health export data')
-    parser.add_argument('export_dir', help='Path to Apple Health export directory')
+    parser.add_argument('export_dir', help='Path to Apple Health export directory (or .zip)')
     parser.add_argument('--arboleaf', help='Path to Arboleaf body scale XLSX export', default=None)
+    parser.add_argument('--profile', help='Profile name (default: "default")', default='default')
     args = parser.parse_args()
-    main(args.export_dir, arboleaf_path=args.arboleaf)
+    main(args.export_dir, arboleaf_path=args.arboleaf, profile=args.profile)

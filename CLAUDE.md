@@ -57,7 +57,7 @@ Cardiovascular, Sleep, Activity, Risk & Goals, Compare, ECG, Insights (correlati
 - Session ID lookup rule is in global CLAUDE.md
 
 ## Conventions
-- Python interpreter: use `/Users/user/opt/anaconda3/bin/python3` (has pandas, openpyxl)
+- Python interpreter: use the `python3` in your PATH that has pandas and openpyxl installed (anaconda or venv)
 - Data inspection: always inspect data structure/format before writing analysis code
 - Test files: remove .py test files after successful analysis runs
 - Do not create .md files without user approval

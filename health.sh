@@ -12,7 +12,7 @@ done
 
 # Start chat server in background
 cd "$DIR"
-/Users/user/opt/anaconda3/bin/python3 "$DIR/chat_server.py" &>/dev/null &
+python3 "$DIR/chat_server.py" &>/dev/null &
 CHAT_PID=$!
 
 # Start dev server in background

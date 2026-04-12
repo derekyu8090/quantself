@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  LaunchAgent template for the QuantSelf health data watcher.
+
+  To use:
+    1. Copy this file to com.quantself.watcher.plist (the real plist is gitignored)
+    2. Replace {{HOME}} with your absolute home path, e.g. /Users/yourname
+       (plists do not interpret $HOME or ~, absolute paths are required)
+    3. Install:
+         cp com.quantself.watcher.plist ~/Library/LaunchAgents/
+         launchctl load ~/Library/LaunchAgents/com.quantself.watcher.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.quantself.watcher</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>{{HOME}}/health-dashboard/scripts/health-watcher.sh</string>
+    </array>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{HOME}}/.quantself-watcher.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{HOME}}/.quantself-watcher.log</string>
+</dict>
+</plist>

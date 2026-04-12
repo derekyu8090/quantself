@@ -1,5 +1,7 @@
 # Personal health data - NEVER commit
 public/data/*.json
+public/data/profiles/
+public/data/profiles.json
 
 # Logs
 logs
@@ -27,3 +29,6 @@ dist-ssr
 *.sw?
 src-tauri/target/
 .env
+
+# Local machine-specific plist (template is committed instead)
+scripts/com.quantself.watcher.plist

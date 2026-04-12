@@ -13,7 +13,7 @@ WATCH_DIRS=(
 )
 
 PIPELINE="$HOME/health-dashboard/process_data.py"
-PYTHON="/Users/user/opt/anaconda3/bin/python3"
+PYTHON="${PYTHON:-python3}"
 LOG="$HOME/.quantself-watcher.log"
 
 log() {

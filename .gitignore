@@ -32,3 +32,6 @@ src-tauri/target/
 
 # Local machine-specific plist (template is committed instead)
 scripts/com.quantself.watcher.plist
+
+# Claude Code project instructions — developer-local
+CLAUDE.md

@@ -2,7 +2,7 @@
 name = "quantself"
 version = "1.4.0"
 description = "Personal Health Dashboard"
-authors = ["Derek Yu"]
+authors = ["QuantSelf"]
 edition = "2021"
 
 [lib]

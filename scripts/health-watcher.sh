@@ -24,8 +24,19 @@ process_export() {
     local export_dir="$1"
     if [ -f "$export_dir/export.xml" ]; then
         log "Found Apple Health export at: $export_dir"
+
+        # Find the most recent Arboleaf body-scale export in Downloads (pattern avoids email leak)
+        local arb_file
+        arb_file=$(ls -t "$HOME/Downloads/"身体指数-*-arboleaf-*.xlsx 2>/dev/null | head -1)
+
+        local extra_args=()
+        if [ -n "$arb_file" ] && [ -f "$arb_file" ]; then
+            extra_args+=(--arboleaf "$arb_file")
+            log "Including Arboleaf data: $(basename "$arb_file")"
+        fi
+
         log "Running data pipeline..."
-        $PYTHON "$PIPELINE" "$export_dir" >> "$LOG" 2>&1
+        $PYTHON "$PIPELINE" "$export_dir" "${extra_args[@]}" >> "$LOG" 2>&1
         if [ $? -eq 0 ]; then
             log "Data updated successfully!"
             # macOS notification

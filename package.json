@@ -7,7 +7,8 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "eslint .",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "install:mac": "npx tauri build && rm -rf /Applications/QuantSelf.app && cp -R src-tauri/target/release/bundle/macos/QuantSelf.app /Applications/"
   },
   "dependencies": {
     "@tauri-apps/api": "^2.10.1",

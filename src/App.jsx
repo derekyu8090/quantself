@@ -144,7 +144,11 @@ function App() {
           setLoading(false)
         }
       } catch (err) {
-        if (!cancelled) { setError(err.message ?? 'Unknown error'); setLoading(false) }
+        if (!cancelled) {
+          const msg = typeof err === 'string' ? err : (err?.message ?? String(err))
+          setError(msg)
+          setLoading(false)
+        }
       }
     }
     loadAllData()

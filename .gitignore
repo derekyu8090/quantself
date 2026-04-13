@@ -35,3 +35,7 @@ scripts/com.quantself.watcher.plist
 
 # Claude Code project instructions — developer-local
 CLAUDE.md
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

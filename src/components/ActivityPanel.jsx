@@ -12,7 +12,7 @@ import CalendarHeatmap from './CalendarHeatmap';
 import AchievementBadges from './AchievementBadges';
 import { getChartTheme } from '../chartTheme';
 import { fmtDateShortZh as formatDate, fmtMonthShortZh as formatMonth, filterByDateRange } from '../utils/dataUtils';
-import { useDateRange } from '../contexts/DateRangeContext';
+import { useDateRange } from '../contexts/useDateRange';
 import {
   BarChart,
   Bar,
@@ -813,10 +813,11 @@ function ActivityPanel({ data, t }) {
   );
 
   // Flights climbed: group daily -> monthly, then filter
+  const flightsDaily = data?.flights?.daily;
   const flightsMonthly = useMemo(() => {
-    if (!data?.flights?.daily?.length) return [];
+    if (!flightsDaily?.length) return [];
     const groups = {};
-    for (const r of data.flights.daily) {
+    for (const r of flightsDaily) {
       const m = r.date?.slice(0, 7);
       if (!m) continue;
       if (!groups[m]) groups[m] = [];
@@ -826,7 +827,7 @@ function ActivityPanel({ data, t }) {
       month,
       mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10,
     }));
-  }, [data?.flights?.daily]);
+  }, [flightsDaily]);
 
   const flightsMonthlyFiltered = useMemo(
     () => filterByDateRange(flightsMonthly, startDate, endDate, 'month'),
@@ -834,10 +835,11 @@ function ActivityPanel({ data, t }) {
   );
 
   // Basal energy: group daily -> monthly, then filter
+  const basalEnergyDaily = data?.basalEnergy?.daily;
   const basalEnergyMonthly = useMemo(() => {
-    if (!data?.basalEnergy?.daily?.length) return [];
+    if (!basalEnergyDaily?.length) return [];
     const groups = {};
-    for (const r of data.basalEnergy.daily) {
+    for (const r of basalEnergyDaily) {
       const m = r.date?.slice(0, 7);
       if (!m) continue;
       if (!groups[m]) groups[m] = [];
@@ -847,7 +849,7 @@ function ActivityPanel({ data, t }) {
       month,
       mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 10) / 10,
     }));
-  }, [data?.basalEnergy?.daily]);
+  }, [basalEnergyDaily]);
 
   const basalEnergyMonthlyFiltered = useMemo(
     () => filterByDateRange(basalEnergyMonthly, startDate, endDate, 'month'),
@@ -867,10 +869,11 @@ function ActivityPanel({ data, t }) {
   );
 
   // Arboleaf — latest record (most recent by date)
+  const arboleaf = data?.arboleaf;
   const latestArboleaf = useMemo(() => {
-    if (!data?.arboleaf?.length) return null;
-    return [...data.arboleaf].sort((a, b) => (a.date > b.date ? 1 : -1)).at(-1);
-  }, [data?.arboleaf]);
+    if (!arboleaf?.length) return null;
+    return [...arboleaf].sort((a, b) => (a.date > b.date ? 1 : -1)).at(-1);
+  }, [arboleaf]);
 
   // Arboleaf filtered for trend chart
   const arboleafFiltered = useMemo(

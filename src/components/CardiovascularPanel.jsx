@@ -36,7 +36,7 @@ import StatCard from './StatCard';
 import ExerciseRecoveryChart from './ExerciseRecoveryChart';
 import { getChartTheme } from '../chartTheme';
 import { fmtMonth, fmtDate, fmtHour, filterByDateRange } from '../utils/dataUtils';
-import { useDateRange } from '../contexts/DateRangeContext';
+import { useDateRange } from '../contexts/useDateRange';
 
 // ─── sub-components ───────────────────────────────────────────────────────────
 
@@ -348,7 +348,9 @@ function WalkingHRChart({ monthly }) {
 
 // ─── main component ───────────────────────────────────────────────────────────
 
-function CardiovascularPanel({ data, overview, workouts, sleepNightly, t }) {
+function CardiovascularPanel({ data, workouts, sleepNightly, t }) {
+  const { startDate, endDate } = useDateRange();
+
   if (!data) {
     return (
       <div className="card" style={{ color: 'var(--text-muted)', textAlign: 'center', padding: '48px' }}>
@@ -358,7 +360,6 @@ function CardiovascularPanel({ data, overview, workouts, sleepNightly, t }) {
   }
 
   const theme = getChartTheme();
-  const { startDate, endDate } = useDateRange();
   const { rhr, hrv, vo2max, walkingHR, hrHourly, spo2 } = data;
 
   // Filtered chart data — stat cards always use all-time stats above

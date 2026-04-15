@@ -38,7 +38,7 @@ import StatCard from './StatCard';
 import CalendarHeatmap from './CalendarHeatmap';
 import { getChartTheme } from '../chartTheme';
 import { fmtMonth, formatBedtime, filterByDateRange } from '../utils/dataUtils';
-import { useDateRange } from '../contexts/DateRangeContext';
+import { useDateRange } from '../contexts/useDateRange';
 
 // ---------------------------------------------------------------------------
 // Heatmap component
@@ -229,11 +229,14 @@ export default function SleepPanel({ data, t }) {
   const theme = getChartTheme();
   const { startDate, endDate } = useDateRange();
 
+  const breathingDisturbances = data?.breathingDisturbances;
+  const wristTemperature = data?.wristTemperature;
+
   // Breathing disturbances — monthly averages
   const bdMonthly = useMemo(() => {
-    if (!data?.breathingDisturbances?.length) return [];
+    if (!breathingDisturbances?.length) return [];
     const groups = {};
-    for (const r of data.breathingDisturbances) {
+    for (const r of breathingDisturbances) {
       const m = r.date.slice(0, 7);
       if (!groups[m]) groups[m] = [];
       groups[m].push(r.value);
@@ -243,13 +246,13 @@ export default function SleepPanel({ data, t }) {
       mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
       max: Math.max(...vals),
     }));
-  }, [data?.breathingDisturbances]);
+  }, [breathingDisturbances]);
 
   // Wrist temperature — monthly averages
   const tempMonthly = useMemo(() => {
-    if (!data?.wristTemperature?.length) return [];
+    if (!wristTemperature?.length) return [];
     const groups = {};
-    for (const r of data.wristTemperature) {
+    for (const r of wristTemperature) {
       const m = r.date.slice(0, 7);
       if (!groups[m]) groups[m] = [];
       groups[m].push(r.value);
@@ -258,7 +261,7 @@ export default function SleepPanel({ data, t }) {
       month,
       mean: Math.round(vals.reduce((a, b) => a + b, 0) / vals.length * 100) / 100,
     }));
-  }, [data?.wristTemperature]);
+  }, [wristTemperature]);
 
   // --- Loading / null guard ---
   if (!data) {

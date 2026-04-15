@@ -118,6 +118,7 @@ export default function CalendarHeatmap({
   colorVar = 'var(--color-hrv)',
   label,
   unit = '',
+  // eslint-disable-next-line no-unused-vars
   targetRange,
 }) {
   const [tooltip, setTooltip] = useState(null);

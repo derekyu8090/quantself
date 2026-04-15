@@ -7,7 +7,7 @@
  */
 
 import { fmtDateFullZh as formatDate, filterByDateRange } from '../utils/dataUtils';
-import { useDateRange } from '../contexts/DateRangeContext';
+import { useDateRange } from '../contexts/useDateRange';
 
 // ─── risk level config ─────────────────────────────────────────────────────
 
@@ -415,6 +415,8 @@ function AnomalyTimeline({ anomalies, t }) {
 // ─── main component ───────────────────────────────────────────────────────────
 
 function RiskPanel({ overview, t }) {
+  const { startDate, endDate } = useDateRange();
+
   if (!overview) {
     return (
       <div
@@ -430,7 +432,6 @@ function RiskPanel({ overview, t }) {
     );
   }
 
-  const { startDate, endDate } = useDateRange();
   const anomaliesFiltered = filterByDateRange(overview.anomalies, startDate, endDate);
 
   return (

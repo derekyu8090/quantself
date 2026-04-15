@@ -16,7 +16,6 @@
 import { useState, useMemo } from 'react';
 import { AreaChart, Area, ResponsiveContainer, Tooltip } from 'recharts';
 import { fmtMonth } from '../utils/dataUtils';
-import { getChartTheme } from '../chartTheme';
 
 // ─── Constants ────────────────────────────────────────────────────────────────
 
@@ -87,7 +86,7 @@ function ScoreBadge({ score }) {
 
 // ─── ComponentBar ─────────────────────────────────────────────────────────────
 
-function ComponentBar({ keyName, label, score, weight, detail, isPriority, priorityLabel }) {
+function ComponentBar({ label, score, weight, detail, isPriority, priorityLabel }) {
   const color = scoreColor(score);
 
   return (
@@ -220,22 +219,25 @@ function SparklineTooltip({ active, payload }) {
 
 function LongevityScoreCard({ data, t }) {
   const [showRefs, setShowRefs] = useState(false);
-
-  if (!data || !data.components) return null;
+  const components = data?.components;
 
   // Sort components by weight descending
   const sortedComponents = useMemo(() => {
-    return Object.entries(data.components).sort((a, b) => b[1].weight - a[1].weight);
-  }, [data.components]);
+    if (!components) return [];
+    return Object.entries(components).sort((a, b) => b[1].weight - a[1].weight);
+  }, [components]);
 
   // Find the component key with the lowest score (improvement priority)
   const lowestKey = useMemo(() => {
+    if (!sortedComponents.length) return null;
     return sortedComponents.reduce(
       (minKey, [k, v]) =>
-        v.score < (data.components[minKey]?.score ?? Infinity) ? k : minKey,
+        v.score < (components[minKey]?.score ?? Infinity) ? k : minKey,
       sortedComponents[0][0]
     );
-  }, [sortedComponents, data.components]);
+  }, [sortedComponents, components]);
+
+  if (!data || !components) return null;
 
   // Detect language from translation function
   const lang = t?.('app.title') === 'HealthDash' && t?.('app.subtitle') === 'Personal Health Dashboard'
@@ -311,7 +313,6 @@ function LongevityScoreCard({ data, t }) {
         {sortedComponents.map(([key, comp]) => (
           <ComponentBar
             key={key}
-            keyName={key}
             label={labels[key] || key}
             score={comp.score}
             weight={comp.weight}

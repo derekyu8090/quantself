@@ -37,7 +37,7 @@ import {
   Legend,
   Cell,
 } from 'recharts';
-import { fmtDate, computeStats } from '../utils/dataUtils';
+import { fmtDate } from '../utils/dataUtils';
 import { getChartTheme } from '../chartTheme';
 import StatCard from './StatCard';
 
@@ -85,7 +85,7 @@ function ScatterTooltip({ active, payload, t }) {
 
 // ─── custom tooltip for timeline chart ───────────────────────────────────────
 
-function TimelineTooltip({ active, payload, label, t }) {
+function TimelineTooltip({ active, payload, label }) {
   const theme = getChartTheme();
   if (!active || !payload?.length) return null;
   return (
@@ -391,7 +391,7 @@ function ExerciseRecoveryChart({ workouts, hrvDaily, rhrDaily, sleepNightly, t }
                 fontSize: 10,
               }}
             />
-            <Tooltip content={(props) => <TimelineTooltip {...props} t={t} />} />
+            <Tooltip content={(props) => <TimelineTooltip {...props} />} />
             <Legend
               wrapperStyle={{ fontSize: '12px', color: 'var(--text-muted)', paddingTop: '8px' }}
               formatter={(value) => <span style={{ color: 'var(--text-muted)' }}>{value}</span>}

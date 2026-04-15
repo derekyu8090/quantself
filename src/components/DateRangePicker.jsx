@@ -1,4 +1,4 @@
-import { useDateRange } from '../contexts/DateRangeContext';
+import { useDateRange } from '../contexts/useDateRange';
 
 function DateRangePicker({ lang }) {
   const {

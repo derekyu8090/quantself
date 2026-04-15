@@ -1,10 +1,8 @@
 import { useState } from 'react';
 import { LineChart, Line, XAxis, YAxis, ResponsiveContainer } from 'recharts';
-import { getChartTheme } from '../chartTheme';
 
 function ECGPanel({ data, t }) {
   const [selectedIdx, setSelectedIdx] = useState(0);
-  const theme = getChartTheme();
 
   if (!data?.records?.length) return (
     <div className="panel">
